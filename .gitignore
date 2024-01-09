@@ -1,4 +1,5 @@
 output/
+crop_224/vggface2_crop_arcfacealign_224/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
