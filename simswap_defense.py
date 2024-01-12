@@ -17,7 +17,7 @@ class SimSwapDefense(nn.Module):
     def __init__(self, logger):
         super(SimSwapDefense, self).__init__()
 
-        # all relative paths base on main.py!
+        # all relative paths start with main.py!
         self.project_path = os.path.dirname(os.path.abspath(__file__))
         self.dataset_path = (
             f"{self.project_path}/crop_224/vggface2_crop_arcfacealign_224"
@@ -36,68 +36,107 @@ class SimSwapDefense(nn.Module):
         self.GAN_G = Generator(input_nc=3, output_nc=3)
         self.GAN_D = Discriminator(input_nc=3)
 
-    def _get_random_pic_path(self) -> tuple[str, str]:
+    def _get_random_pic_path(self, count: int = 1) -> tuple[list[str], list[str]]:
         people = os.listdir(self.dataset_path)
-        people1, people2 = random.sample(people, 2)
-        path1 = random.choice(os.listdir(f"{self.dataset_path}/{people1}"))
-        path2 = random.choice(os.listdir(f"{self.dataset_path}/{people2}"))
+        src_people, dst_people = random.sample(people, 2)
 
-        self.logger.debug(f"src: {people1}/{path1}, dst: {people2}/{path2}")
+        src_imgs = os.listdir(f"{self.dataset_path}/{src_people}")
+        dst_imgs = os.listdir(f"{self.dataset_path}/{dst_people}")
+        count = min(len(src_imgs), len(dst_imgs), count)
 
-        return (
-            f"{self.dataset_path}/{people1}/{path1}",
-            f"{self.dataset_path}/{people2}/{path2}",
-        )
+        assert count > 0
 
-    def void(self):
-        # randomly select two different people and swap their face
-        save_path = f"../output/simswap/void.png"
+        src_select_imgs = random.sample(src_imgs, count)
+        dst_select_imgs = random.sample(dst_imgs, count)
 
-        img_src_path, img_dst_path = self._get_random_pic_path()
+        src_select_imgs = [
+            f"{self.dataset_path}/{src_people}/{img}" for img in src_select_imgs
+        ]
+        dst_select_imgs = [
+            f"{self.dataset_path}/{dst_people}/{img}" for img in dst_select_imgs
+        ]
 
-        img_src = test_one_image.transformer_Arcface(
-            Image.open(img_src_path).convert("RGB")
-        )
-        img_id = img_src.view(-1, img_src.shape[0], img_src.shape[1], img_src.shape[2])
+        self.logger.debug(f"src: {src_select_imgs}, dst: {dst_select_imgs}")
 
-        img_dst = test_one_image.transformer(Image.open(img_dst_path).convert("RGB"))
-        img_att = img_dst.view(-1, img_dst.shape[0], img_dst.shape[1], img_dst.shape[2])
+        return src_select_imgs, dst_select_imgs
 
-        img_id = img_id.cuda()
-        img_att = img_att.cuda()
+    def _get_imgs_id(self, imgs_path: list[str]) -> torch.tensor:
+        imgs = [
+            test_one_image.transformer_Arcface(Image.open(path).convert("RGB"))
+            for path in imgs_path
+        ]
 
-        self.target.eval()
+        img_id = torch.stack(imgs)
 
+        return img_id.cuda()
+
+    def _get_imgs_att(self, imgs_path: list[str]) -> torch.tensor:
+        imgs = [
+            test_one_image.transformer(Image.open(path).convert("RGB"))
+            for path in imgs_path
+        ]
+
+        img_att = torch.stack(imgs)
+
+        return img_att.cuda()
+
+    def _get_latent_id(self, img_id: torch.tensor) -> torch.tensor:
         img_id_downsample = F.interpolate(img_id, size=(112, 112))
         latent_id = self.target.netArc(img_id_downsample)
         latent_id = latent_id.detach().to("cpu")
         latent_id = latent_id / np.linalg.norm(latent_id, axis=1, keepdims=True)
-        latent_id = latent_id.to("cuda")
 
-        img_fake = self.target(img_id, img_att, latent_id, latent_id, True)
+        return latent_id.cuda()
 
-        for j in range(img_id.shape[0]):
-            if j == 0:
-                row1 = img_id[j]
-                row2 = img_att[j]
-                row3 = img_fake[j]
-            else:
-                row1 = torch.cat([row1, img_id[j]], dim=2)
-                row2 = torch.cat([row2, img_att[j]], dim=2)
-                row3 = torch.cat([row3, img_fake[j]], dim=2)
+    def _restore_swap_img(self, swap_img: torch.tensor) -> list[torch.tensor]:
+        swap_imgs = torch.chunk(swap_img, chunks=swap_img.shape[0], dim=0)
+        swap_imgs = list(swap_imgs)
 
-        full = row3.detach()
-        full = full.permute(1, 2, 0)
-        output = full.to("cpu")
-        output = np.array(output)
-        output = output[..., ::-1]
+        for i in range(len(swap_imgs)):
+            swap_imgs[i] = swap_imgs[i].view(
+                swap_imgs[i].shape[1], swap_imgs[i].shape[2], swap_imgs[i].shape[3]
+            )
+            swap_imgs[i] = swap_imgs[i].detach()
+            swap_imgs[i] = swap_imgs[i].permute(1, 2, 0)
+            swap_imgs[i] = swap_imgs[i].to("cpu")
+            swap_imgs[i] = np.array(swap_imgs[i])
+            swap_imgs[i] = swap_imgs[i][..., ::-1]
+            swap_imgs[i] *= 255
 
-        output = output * 255
+        return swap_imgs
 
-        output = np.concatenate(
-            (cv2.imread(img_src_path), cv2.imread(img_dst_path), output), axis=1
-        )
+    def _save_swap_imgs(
+        self,
+        src_imgs: list[str],
+        dst_imgs: list[str],
+        swap_imgs: list[torch.tensor],
+        save_path: str,
+    ) -> None:
+        groups = []
+        for i in range(len(src_imgs)):
+            group = np.concatenate(
+                (cv2.imread(src_imgs[i]), cv2.imread(dst_imgs[i]), swap_imgs[i]), axis=1
+            )
+            groups.append(group)
+
+        output = np.concatenate(groups, axis=0)
         cv2.imwrite(save_path, output)
+
+    def void(self):
+        save_path = f"../output/simswap/void.png"
+
+        self.target.eval()
+
+        swap_count = 3
+        src_imgs, dst_imgs = self._get_random_pic_path(swap_count)
+        img_id = self._get_imgs_id(src_imgs)
+        img_att = self._get_imgs_att(dst_imgs)
+        latent_id = self._get_latent_id(img_id)
+
+        swap_img = self.target(img_id, img_att, latent_id, latent_id, True)
+        swap_imgs = self._restore_swap_img(swap_img)
+
+        self._save_swap_imgs(src_imgs, dst_imgs, swap_imgs, save_path)
 
     def _get_train_pic_path(self) -> tuple[list[str], list[str]]:
         people = os.listdir(self.dataset_path)
