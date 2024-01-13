@@ -149,7 +149,7 @@ class Generator(nn.Module):
             nn.Tanh(),
         )
 
-    def forward(self, input) -> tuple[torch.tensor, torch.tensor]:
+    def forward(self, input: torch.tensor) -> tuple[torch.tensor, torch.tensor]:
         x = input  # 3 * 224 * 224
 
         x = self.first_layer(x)
@@ -168,6 +168,20 @@ class Generator(nn.Module):
         x = (x + 1) / 2
 
         return x, torch.clamp(input + x, 0, 1)
+
+    def decoder(self, input):
+        x = input
+
+        if self.deep:
+            x = self.up4(x)
+
+        x = self.up3(x)
+        x = self.up2(x)
+        x = self.up1(x)
+        x = self.last_layer(x)
+        x = (x + 1) / 2
+
+        return x
 
 
 class Generator_Adain_Upsample(nn.Module):
@@ -281,6 +295,18 @@ class Generator_Adain_Upsample(nn.Module):
         x = self.up1(x)
         x = self.last_layer(x)
         x = (x + 1) / 2
+
+        return x
+
+    def encoder(self, input):
+        x = input  # 3*224*224
+
+        x = self.first_layer(x)
+        x = self.down1(x)
+        x = self.down2(x)
+        x = self.down3(x)
+        if self.deep:
+            x = self.down4(x)
 
         return x
 
