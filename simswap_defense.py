@@ -12,9 +12,11 @@ import torch.optim as optim
 import PIL.Image as Image
 import torch.nn.functional as F
 
+from torch.autograd import Variable
+
 
 class SimSwapDefense(nn.Module):
-    def __init__(self, logger):
+    def __init__(self, logger, args):
         super(SimSwapDefense, self).__init__()
 
         # all relative paths start with main.py!
@@ -23,10 +25,11 @@ class SimSwapDefense(nn.Module):
             f"{self.project_path}/crop_224/vggface2_crop_arcfacealign_224"
         )
         self.logger = logger
+        self.args = args
 
         from options.test_options import TestOptions
         from models.models import create_model
-        from models.fs_networks import Generator, Discriminator
+        from models.fs_networks import Generator, Defense_Discriminator
 
         self.opt = TestOptions().parse()
         torch.nn.Module.dump_patches = True
@@ -34,7 +37,7 @@ class SimSwapDefense(nn.Module):
         self.target = create_model(self.opt)
 
         self.GAN_G = Generator(input_nc=3, output_nc=3)
-        self.GAN_D = Discriminator(input_nc=3)
+        self.GAN_D = Defense_Discriminator()
 
     def _get_random_pic_path(self, count: int = 1) -> tuple[list[str], list[str]]:
         people = os.listdir(self.dataset_path)
@@ -200,7 +203,9 @@ class SimSwapDefense(nn.Module):
         output = np.concatenate(groups[:save_count], axis=0)
         cv2.imwrite(save_path, output)
 
-    def GAN(self, epochs=128, g_lr=5e-4, loss_ratio=[1, 1000, 0.0003, 0.0003]):
+    def GAN(
+        self, epochs=128, lr_g=5e-4, lr_d=2e-4, loss_ratio=[1, 1000, 0.0003, 0.0003, 1]
+    ):
         src_imgs, dst_imgs = self._get_train_pic_path()
         self.logger.debug(
             f"len(src_imgs): {len(src_imgs)}, len(dst_imgs): {len(dst_imgs)}"
@@ -208,11 +213,13 @@ class SimSwapDefense(nn.Module):
 
         save_count = 3
 
-        optimizer_G = optim.Adam(self.GAN_G.parameters(), lr=g_lr, betas=(0.5, 0.999))
+        optimizer_G = optim.Adam(self.GAN_G.parameters(), lr=lr_g, betas=(0.5, 0.999))
+        optimizer_D = optim.RMSprop(self.GAN_D.parameters(), lr=lr_d)
         scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer_G, epochs)
 
         self.target.to("cuda").eval()
         self.GAN_G.to("cuda").train()
+        self.GAN_D.to("cuda").eval()
 
         l1_loss = nn.L1Loss().cuda()
         l2_loss = nn.MSELoss().cuda()
@@ -246,19 +253,31 @@ class SimSwapDefense(nn.Module):
                 shift_img_latent_code, pert_img_latent_code
             )
 
-            loss = (
+            D_loss = 0
+            if self.args.use_disc:
+                D_loss = self.GAN_D(pert_img_id).mean() - self.GAN_D(img_id).mean()
+            G_loss = (
                 loss_ratio[0] * defense_diff_loss
                 + loss_ratio[1] * swap_diff_loss
                 + loss_ratio[2] * latent_code_diff_loss
                 + loss_ratio[3] * sift_latent_code_diff_loss
+                + loss_ratio[4] * D_loss
             )
-            loss.backward()
-            self.logger.info(
-                f"[Epoch {epoch:4}]loss: {loss:.5f}({defense_diff_loss:.5f},{swap_diff_loss:.5f}, {latent_code_diff_loss:.5f}, {sift_latent_code_diff_loss:.5f})"
-            )
-
+            G_loss.backward()
             optimizer_G.step()
-            scheduler.step()
+
+            self.GAN_G.eval()
+            self.GAN_D.train()
+            self.GAN_D.zero_grad()
+
+            if self.args.use_disc:
+                D_loss.backward()
+                optimizer_D.step()
+                scheduler.step()
+
+            self.logger.info(
+                f"[Epoch {epoch:4}]loss: {G_loss:.5f}({defense_diff_loss:.5f}, {swap_diff_loss:.5f}, {latent_code_diff_loss:.5f}, {sift_latent_code_diff_loss:.5f}, {D_loss:.5f})"
+            )
 
             swap_imgs = self._restore_swap_img(swap_img)
             noises = self._restore_swap_img(noise)

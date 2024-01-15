@@ -311,6 +311,43 @@ class Generator_Adain_Upsample(nn.Module):
         return x
 
 
+class Defense_Discriminator(nn.Module):
+    def __init__(self):
+        super(Defense_Discriminator, self).__init__()
+        self.conv1 = nn.Sequential(
+            nn.Conv2d(3, 128, kernel_size=5, stride=2), nn.LeakyReLU(0.1, inplace=True)
+        )
+        self.conv2 = nn.Sequential(
+            nn.Conv2d(128, 256, kernel_size=5, stride=2),
+            nn.LeakyReLU(0.1, inplace=True),
+        )
+        self.conv3 = nn.Sequential(
+            nn.Conv2d(256, 512, kernel_size=5, stride=2),
+            nn.LeakyReLU(0.1, inplace=True),
+        )
+        self.conv4 = nn.Sequential(
+            nn.Conv2d(512, 1024, kernel_size=5, stride=2),
+            nn.LeakyReLU(0.1, inplace=True),
+        )
+        self.conv5 = nn.Sequential(nn.Conv2d(1024, 1024, kernel_size=5, stride=2))
+        self.conv6 = nn.Sequential(nn.Conv2d(1024, 1024, kernel_size=4))
+
+        self.tail = nn.Linear(1024, 1)
+
+    def forward(self, input):
+        x = input
+        x = self.conv1(x)
+        x = self.conv2(x)
+        x = self.conv3(x)
+        x = self.conv4(x)
+        x = self.conv5(x)
+        x = self.conv6(x)
+        x = x.view(input.shape[0], -1)
+        output = self.tail(x)
+
+        return output
+
+
 class Discriminator(nn.Module):
     def __init__(self, input_nc, norm_layer=nn.BatchNorm2d, use_sigmoid=False):
         super(Discriminator, self).__init__()
