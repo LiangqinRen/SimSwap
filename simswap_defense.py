@@ -11,6 +11,7 @@ import torch.nn as nn
 import torch.optim as optim
 import PIL.Image as Image
 import torch.nn.functional as F
+import torchvision.transforms as transforms
 
 from torch.autograd import Variable
 
@@ -59,8 +60,6 @@ class SimSwapDefense(nn.Module):
             f"{self.dataset_path}/{dst_people}/{img}" for img in dst_select_imgs
         ]
 
-        self.logger.debug(f"src: {src_select_imgs}, dst: {dst_select_imgs}")
-
         return src_select_imgs, dst_select_imgs
 
     def _get_imgs_id(self, imgs_path: list[str]) -> torch.tensor:
@@ -70,6 +69,8 @@ class SimSwapDefense(nn.Module):
         ]
 
         img_id = torch.stack(imgs)
+        img_transform = transforms.Compose([transforms.CenterCrop(224)])
+        img_id = img_transform(img_id)
 
         return img_id.cuda()
 
@@ -80,6 +81,8 @@ class SimSwapDefense(nn.Module):
         ]
 
         img_att = torch.stack(imgs)
+        img_transform = transforms.Compose([transforms.CenterCrop(224)])
+        img_att = img_transform(img_att)
 
         return img_att.cuda()
 
@@ -125,8 +128,8 @@ class SimSwapDefense(nn.Module):
         output = np.concatenate(groups, axis=0)
         cv2.imwrite(save_path, output)
 
-    def void(self):
-        save_path = f"../output/simswap/void.png"
+    def void(self, args):
+        save_path = f"../log/{args.ID}/{args.project}_void.png"
 
         self.target.eval()
 
@@ -141,9 +144,9 @@ class SimSwapDefense(nn.Module):
 
         self._save_void_imgs(src_imgs, dst_imgs, swap_imgs, save_path)
 
-    def _get_train_pic_path(self) -> tuple[list[str], list[str]]:
+    def _get_train_pic_path(self, batch_size: int) -> tuple[list[str], list[str]]:
         people = os.listdir(self.dataset_path)
-        people1, people2 = people[100], people[101]  # random.sample(people, 2)
+        people1, people2 = "trump", "cage"  # random.sample(people, 2)
 
         people1_imgs = [
             f"{self.dataset_path}/{people1}/{i}"
@@ -154,9 +157,11 @@ class SimSwapDefense(nn.Module):
             for i in os.listdir(f"{self.dataset_path}/{people2}")
         ]
 
-        min_count = min(20, len(people1_imgs), len(people2_imgs))
+        min_count = min(batch_size, len(people1_imgs), len(people2_imgs))
 
-        return people1_imgs[:min_count], people2_imgs[:min_count]
+        return random.sample(people1_imgs, k=min_count), random.sample(
+            people2_imgs, k=min_count
+        )
 
     def _get_pert_imgs_id(
         self, imgs_path: list[str]
@@ -174,6 +179,16 @@ class SimSwapDefense(nn.Module):
 
         return rotated_img
 
+    def _center_crop(self, img: np.array, dim: list[int]):
+        width, height = img.shape[1], img.shape[0]
+
+        crop_width = dim[0] if dim[0] < img.shape[1] else img.shape[1]
+        crop_height = dim[1] if dim[1] < img.shape[0] else img.shape[0]
+        mid_x, mid_y = int(width / 2), int(height / 2)
+        cw2, ch2 = int(crop_width / 2), int(crop_height / 2)
+        crop_img = img[mid_y - ch2 : mid_y + ch2, mid_x - cw2 : mid_x + cw2]
+        return crop_img
+
     def _save_gan_imgs(
         self,
         src_imgs: list[str],
@@ -189,8 +204,9 @@ class SimSwapDefense(nn.Module):
         for i in range(len(src_imgs[:save_count])):
             group = np.concatenate(
                 (
-                    cv2.imread(src_imgs[i]),
-                    cv2.imread(dst_imgs[i]),
+                    self._center_crop(cv2.imread(src_imgs[i]), [224, 224]),
+                    self._center_crop(cv2.imread(dst_imgs[i]), [224, 224]),
+                    # cv2.imread(dst_imgs[i]),
                     swap_imgs[i],
                     noises[i],
                     pert_imgs[i],
@@ -203,19 +219,41 @@ class SimSwapDefense(nn.Module):
         output = np.concatenate(groups[:save_count], axis=0)
         cv2.imwrite(save_path, output)
 
-    def GAN(
-        self, epochs=128, lr_g=5e-4, lr_d=2e-4, loss_ratio=[1, 1000, 0.0003, 0.0003, 1]
-    ):
-        src_imgs, dst_imgs = self._get_train_pic_path()
-        self.logger.debug(
-            f"len(src_imgs): {len(src_imgs)}, len(dst_imgs): {len(dst_imgs)}"
+    def _save_checkpoint(
+        self,
+        args,
+        path: str,
+        GAN_G_optim: torch.optim,
+        GAN_D_optim: torch.optim,
+        GAN_G_loss: torch.tensor,
+        GAN_D_loss: torch.tensor,
+    ) -> None:
+        torch.save(
+            {
+                "epoch": args.epoch,
+                "GAN_G_state_dict": self.GAN_G.state_dict(),
+                "GAN_D_state_dict": self.GAN_D.state_dict(),
+                "GAN_G_optim": GAN_G_optim.state_dict(),
+                "GAN_D_optim": GAN_D_optim.state_dict(),
+                "GAN_G_loss": GAN_G_loss,
+                "GAN_D_loss": GAN_D_loss,
+            },
+            path,
         )
 
+    def GAN(
+        self,
+        args,
+        lr_g=5e-4,
+        lr_d=2e-4,
+        loss_ratio=[1000, 1000, 0.0003, 0.0003, 1],
+    ):
         save_count = 3
 
         optimizer_G = optim.Adam(self.GAN_G.parameters(), lr=lr_g, betas=(0.5, 0.999))
         optimizer_D = optim.RMSprop(self.GAN_D.parameters(), lr=lr_d)
-        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer_G, epochs)
+
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer_G, args.epoch)
 
         self.target.to("cuda").eval()
         self.GAN_G.to("cuda").train()
@@ -225,8 +263,10 @@ class SimSwapDefense(nn.Module):
         l2_loss = nn.MSELoss().cuda()
         flatten = nn.Flatten().cuda()
 
-        for epoch in range(epochs):
-            save_path = f"../output/simswap/gan_{epoch}.png"
+        best_loss = float("inf")
+        for epoch in range(args.epoch):
+            src_imgs, dst_imgs = self._get_train_pic_path(args.batch_size)
+            save_path = f"../log/{args.ID}/{args.project}_gan_{epoch}.png"
 
             img_att = self._get_imgs_att(dst_imgs)
             img_id = self._get_imgs_id(src_imgs)
@@ -249,7 +289,7 @@ class SimSwapDefense(nn.Module):
             defense_diff_loss = l2_loss(flatten(img_id), flatten(pert_img_id))
             swap_diff_loss = -l2_loss(flatten(swap_img), flatten(pert_swap_img))
             latent_code_diff_loss = -l2_loss(img_latent_code, pert_img_latent_code)
-            sift_latent_code_diff_loss = l2_loss(
+            shift_latent_code_diff_loss = l2_loss(
                 shift_img_latent_code, pert_img_latent_code
             )
 
@@ -260,7 +300,7 @@ class SimSwapDefense(nn.Module):
                 loss_ratio[0] * defense_diff_loss
                 + loss_ratio[1] * swap_diff_loss
                 + loss_ratio[2] * latent_code_diff_loss
-                + loss_ratio[3] * sift_latent_code_diff_loss
+                + loss_ratio[3] * shift_latent_code_diff_loss
                 + loss_ratio[4] * D_loss
             )
             G_loss.backward()
@@ -276,7 +316,7 @@ class SimSwapDefense(nn.Module):
                 scheduler.step()
 
             self.logger.info(
-                f"[Epoch {epoch:4}]loss: {G_loss:.5f}({defense_diff_loss:.5f}, {swap_diff_loss:.5f}, {latent_code_diff_loss:.5f}, {sift_latent_code_diff_loss:.5f}, {D_loss:.5f})"
+                f"[Epoch {epoch:4}]loss: {G_loss:.5f}({defense_diff_loss:.5f}, {swap_diff_loss:.5f}, {latent_code_diff_loss:.5f}, {shift_latent_code_diff_loss:.5f}, {D_loss:.5f})"
             )
 
             swap_imgs = self._restore_swap_img(swap_img)
@@ -284,13 +324,25 @@ class SimSwapDefense(nn.Module):
             pert_imgs = self._restore_swap_img(pert_img_id)
             pert_swap_imgs = self._restore_swap_img(pert_swap_img)
 
-            self._save_gan_imgs(
-                src_imgs,
-                dst_imgs,
-                swap_imgs,
-                noises,
-                pert_imgs,
-                pert_swap_imgs,
-                save_count,
-                save_path,
-            )
+            if epoch % args.save_interval == 0:
+                self._save_gan_imgs(
+                    src_imgs,
+                    dst_imgs,
+                    swap_imgs,
+                    noises,
+                    pert_imgs,
+                    pert_swap_imgs,
+                    save_count,
+                    save_path,
+                )
+
+            if G_loss.data < best_loss:
+                best_loss = G_loss.data
+                log_save_path = f"../log/{args.ID}/{args.project}.pth"
+                checkpoint_save_path = f"../checkpoint/{args.project}.pth"
+                self._save_checkpoint(
+                    args, log_save_path, optimizer_G, optimizer_D, G_loss, D_loss
+                )
+                self._save_checkpoint(
+                    args, checkpoint_save_path, optimizer_G, optimizer_D, G_loss, D_loss
+                )
