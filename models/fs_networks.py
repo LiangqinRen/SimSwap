@@ -310,6 +310,18 @@ class Generator_Adain_Upsample(nn.Module):
 
         return x
 
+    def encoder2(self, input, id):
+        x = input  # 3*224*224
+
+        x = self.first_layer(x)
+        x = self.down1(x)
+        x = self.down2(x)
+        x = self.down3(x)
+        if self.deep:
+            x = self.down4(x)
+
+        return x
+
 
 class Defense_Discriminator(nn.Module):
     def __init__(self):

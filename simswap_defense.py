@@ -129,6 +129,8 @@ class SimSwapDefense(nn.Module):
         cv2.imwrite(save_path, output)
 
     def void(self, args):
+        print("Hello World!")
+        quit()
         save_path = f"../log/{args.ID}/{args.project}_void.png"
 
         self.target.eval()
@@ -241,6 +243,120 @@ class SimSwapDefense(nn.Module):
             path,
         )
 
+    def _restore_img(
+        self, swap_img: torch.tensor, detransform=False
+    ) -> list[torch.tensor]:
+        swap_imgs = torch.chunk(swap_img, chunks=swap_img.shape[0], dim=0)
+        swap_imgs = list(swap_imgs)
+
+        for i in range(len(swap_imgs)):
+            if detransform:
+                swap_imgs[i] = test_one_image.detransformer(swap_imgs[i])
+            swap_imgs[i] = swap_imgs[i].view(
+                swap_imgs[i].shape[1], swap_imgs[i].shape[2], swap_imgs[i].shape[3]
+            )
+            swap_imgs[i] = swap_imgs[i].detach()
+            swap_imgs[i] = swap_imgs[i].permute(1, 2, 0)
+            swap_imgs[i] = swap_imgs[i].to("cpu")
+            swap_imgs[i] = np.array(swap_imgs[i])
+            swap_imgs[i] = swap_imgs[i][..., ::-1]
+            swap_imgs[i] *= 255
+        return swap_imgs
+
+    def _save_imgs(
+        self,
+        imgs: list[list[torch.tensor]],
+        save_path: str,
+        save_count: str = 3,
+        rows: int = 5,
+    ) -> None:
+        groups = []
+        for i in range(save_count):
+            row_groups = []
+            for row in range(rows):
+                set_of_imgs = []
+                for j in range(len(imgs)):
+                    img_group = imgs[j]
+                    set_of_imgs.append(img_group[i * rows + row])
+                group = np.concatenate(set_of_imgs, axis=1)
+                row_groups.append(group)
+            groups.append(np.concatenate(row_groups, axis=0))
+
+        output = np.concatenate(groups, axis=1)
+        cv2.imwrite(save_path, output)
+
+    def PGD(
+        self,
+        args,
+        epsilon=1e-3,
+        iters=100,
+        loss_ratio=[
+            1.0,
+            0.002,
+        ],
+    ):
+        save_path = f"../log/{args.ID}/{args.project}_pgd.png"
+
+        self.target.to("cuda").eval()
+
+        l1_loss = nn.L1Loss().cuda()
+        l2_loss = nn.MSELoss().cuda()
+        flatten = nn.Flatten().cuda()
+
+        swap_count = 15
+        src_imgs, dst_imgs = self._get_random_pic_path(swap_count)
+
+        img_id = self._get_imgs_id(src_imgs).detach()
+        img_att = self._get_imgs_att(dst_imgs).detach()
+        img_x = img_att.clone().detach()
+
+        latent_id = self._get_latent_id(img_id).detach()
+        latent_att = self._get_latent_id(img_att).detach()
+
+        swap_img = (
+            self.target(img_id, img_att, latent_id, latent_att, True).clone().detach()
+        )
+
+        epsilon = epsilon * (torch.max(img_id) - torch.min(img_id)) / 2
+
+        for iter_ in range(iters):
+            img_x.requires_grad = True
+            self.target.zero_grad()
+            latent_x = self._get_latent_id(img_x)
+            pert_swap_img = self.target(
+                img_id, img_x, latent_id.detach(), latent_x.detach(), True
+            )
+
+            pert_img_latent_code = self.target.netG.encoder2(img_x, latent_id.detach())
+            swap_diff_loss = -l2_loss(
+                flatten(pert_swap_img), flatten(torch.zeros_like(pert_swap_img))
+            )
+
+            latent_code_diff_loss = -l2_loss(
+                pert_img_latent_code, torch.zeros_like(pert_img_latent_code)
+            )
+
+            G_loss = (
+                loss_ratio[0] * swap_diff_loss + loss_ratio[1] * latent_code_diff_loss
+            )
+            G_loss.backward()
+            # judge if the gradient is all zeros
+            img_x = img_x.detach() + epsilon * img_x.grad.sign()
+
+            self.logger.info(
+                f"[Iter {iter_:4}]loss: {G_loss:.5f}({swap_diff_loss:.5f}, {latent_code_diff_loss:.5f}"
+            )
+
+        latent_x = self._get_latent_id(img_x)
+        pert_swap_img = self.target(img_id, img_x, latent_id, latent_x, True)
+        groups = [img_att, swap_img, img_x - img_att, img_x, pert_swap_img]
+        detrans = [False, False, False, False, False]
+        save_groups = [
+            self._restore_img(group, detransform=detrans[i])
+            for i, group in enumerate(groups)
+        ]
+        self._save_imgs(save_groups, save_path)
+
     def GAN(
         self,
         args,
@@ -345,4 +461,136 @@ class SimSwapDefense(nn.Module):
                 )
                 self._save_checkpoint(
                     args, checkpoint_save_path, optimizer_G, optimizer_D, G_loss, D_loss
+                )
+
+    def GAN_clip(
+        self,
+        args,
+        lr_g=5e-5,
+        lr_d=2e-4,
+        loss_ratio=[0.1, 0.9, 0.002, 0.0, 0.0],
+        clipped=[0.05, 2.0],
+    ):
+        self.GAN_G.load_state_dict(self.target.netG.state_dict(), strict=False)
+        self.target.eval()
+        test_src_imgs, test_dst_imgs = self._get_random_pic_path(15)
+        test_img_id = self._get_imgs_id(test_src_imgs)
+        test_img_att = self._get_imgs_att(test_dst_imgs)
+        test_latent_id = self._get_latent_id(test_img_id)
+        test_swap_img = self.target(
+            test_img_id, test_img_att, test_latent_id, None, True
+        )
+
+        # optimizer_G = optim.Adam(self.GAN_G.parameters(), lr=lr_g, betas=(0.5, 0.999))
+        # only optimize the parameters of the up1, up2, up3, up4, last_layer in the generator
+        optimizer_G = optim.Adam(
+            [
+                {"params": self.GAN_G.up1.parameters()},
+                {"params": self.GAN_G.up2.parameters()},
+                {"params": self.GAN_G.up3.parameters()},
+                {"params": self.GAN_G.up4.parameters()},
+                {"params": self.GAN_G.last_layer.parameters()},
+            ],
+            lr=lr_g,
+            betas=(0.5, 0.999),
+        )
+
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer_G, args.epoch)
+
+        self.target.to("cuda").eval()
+        self.GAN_G.to("cuda").train()
+
+        l1_loss = nn.L1Loss().cuda()
+        l2_loss = nn.MSELoss().cuda()
+        flatten = nn.Flatten().cuda()
+
+        for param in self.GAN_G.first_layer.parameters():
+            param.requires_grad = False
+        for param in self.GAN_G.down1.parameters():
+            param.requires_grad = False
+        for param in self.GAN_G.down2.parameters():
+            param.requires_grad = False
+        for param in self.GAN_G.down3.parameters():
+            param.requires_grad = False
+        for param in self.GAN_G.down4.parameters():
+            param.requires_grad = False
+
+        best_loss = float("inf")
+        for epoch in range(args.epoch):
+            self.GAN_G.train()
+
+            src_imgs, dst_imgs = self._get_train_pic_path(args.batch_size)
+            save_path = f"../log/{args.ID}/{args.project}_gan_{epoch}.png"
+
+            img_att = self._get_imgs_att(dst_imgs)
+            img_id = self._get_imgs_id(src_imgs)
+            latent_id = self._get_latent_id(img_id)
+            swap_img = self.target(img_id, img_att, latent_id, None, True)
+            img_latent_code = self.target.netG.encoder2(img_att, latent_id)
+
+            protect_img, _ = self.GAN_G(img_att)
+            pert_swap_img = self.target(img_id, protect_img, latent_id, None, True)
+            pert_img_latent_code = self.target.netG.encoder2(protect_img, latent_id)
+
+            shift_img_id = self._get_shifted_img_id(img_att)
+            shift_img_latent_code = self.target.netG.encoder2(shift_img_id, latent_id)
+
+            self.GAN_G.zero_grad()
+            defense_diff_loss = l2_loss(flatten(img_att), flatten(protect_img))
+            # swap_diff_loss = -l2_loss(flatten(swap_img), flatten(pert_swap_img))
+            swap_diff_loss = -torch.clamp(
+                l2_loss(flatten(swap_img), flatten(pert_swap_img)), 0.0, clipped[0]
+            )
+            # latent_code_diff_loss = -l2_loss(img_latent_code, pert_img_latent_code)
+            latent_code_diff_loss = -torch.clamp(
+                l2_loss(img_latent_code, pert_img_latent_code), 0.0, clipped[1]
+            )
+            shift_latent_code_diff_loss = l2_loss(
+                shift_img_latent_code, pert_img_latent_code
+            )
+
+            G_loss = (
+                loss_ratio[0] * defense_diff_loss
+                + loss_ratio[1] * swap_diff_loss
+                + loss_ratio[2] * latent_code_diff_loss
+                + loss_ratio[3] * shift_latent_code_diff_loss
+            )
+            G_loss.backward()
+            optimizer_G.step()
+            scheduler.step()
+
+            self.logger.info(
+                f"[Epoch {epoch:4}]loss: {G_loss:.5f}({defense_diff_loss:.5f}, {swap_diff_loss:.5f}, {latent_code_diff_loss:.5f})"
+            )
+
+            if epoch % args.save_interval == 0:
+                with torch.no_grad():
+                    self.GAN_G.eval()
+                    self.target.eval()
+                    test_protect_img = self.GAN_G(test_img_att)[0]
+                    test_pert_swap_img = self.target(
+                        test_img_id, test_protect_img, test_latent_id, None, True
+                    )
+                    groups = [
+                        test_img_att,
+                        test_swap_img,
+                        test_protect_img,
+                        test_pert_swap_img,
+                    ]
+                    detrans = [False, False, False, False]
+                    save_groups = [
+                        self._restore_img(group, detransform=detrans[i])
+                        for i, group in enumerate(groups)
+                    ]
+                    self._save_imgs(save_groups, save_path)
+
+            if G_loss.data < best_loss:
+                best_loss = G_loss.data
+                log_save_path = f"../log/{args.ID}/{args.project}.pth"
+                checkpoint_save_path = f"../checkpoint/{args.project}.pth"
+                self._save_checkpoint(
+                    args, log_save_path, optimizer_G, optimizer_G, G_loss, G_loss
+                )
+                self._save_checkpoint(
+                    args, checkpoint_save_path, optimizer_G, optimizer_G, G_loss, G_loss
                 )
