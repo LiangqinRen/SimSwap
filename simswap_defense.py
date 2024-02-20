@@ -118,11 +118,9 @@ class SimSwapDefense(nn.Module):
 
         return img_att.cuda()
 
-    def _get_latent_code(self, img: torch.tensor) -> torch.tensor:
+    def _get_img_prior(self, img: torch.tensor) -> torch.tensor:
         img_downsample = F.interpolate(img, size=(112, 112))
         latent = self.target.netArc(img_downsample)
-        # latent_id = latent_id  # .detach().to("cpu")
-        # latent_id = latent_id / np.linalg.norm(latent_id, axis=1, keepdims=True)
         latent = latent / torch.norm(latent, p=2, dim=1)[0]
 
         return latent.cuda()
@@ -172,7 +170,7 @@ class SimSwapDefense(nn.Module):
         src_imgs, dst_imgs = self._get_random_pic_path(swap_count)
         img_id = self._get_imgs_id(src_imgs)
         img_att = self._get_imgs_att(dst_imgs)
-        latent_id = self._get_latent_code(img_id)
+        latent_id = self._get_img_prior(img_id)
 
         swap_img = self.target(img_id, img_att, latent_id, latent_id, True)
         swap_imgs = self._restore_swap_img(swap_img)
@@ -321,8 +319,12 @@ class SimSwapDefense(nn.Module):
     def PGD_SRC(
         self,
         args,
-        epsilon=3e-2,
+        epsilon=1e-2,
         limit=1e-1,
+        loss_ratio=[
+            1,
+            0.2,
+        ],
         iters=100,
     ):
         save_path = f"../log/{args.ID}/{args.project}_pgd_src.png"
@@ -332,7 +334,6 @@ class SimSwapDefense(nn.Module):
 
         src_imgs_path = [
             f"{self.project_path}/crop_224/zjl.jpg",
-            # f"{self.project_path}/crop_224/zjl.jpg",
         ]
         dst_imgs_path = [
             f"{self.project_path}/crop_224/zrf.jpg",
@@ -341,9 +342,9 @@ class SimSwapDefense(nn.Module):
 
         src_imgs = self._load_src_imgs(src_imgs_path)
         dst_imgs = self._load_dst_imgs(dst_imgs_path)
-        latent_code = self._get_latent_code(src_imgs)
+        img_prior = self._get_img_prior(src_imgs)
 
-        swapped_img = self.target(None, dst_imgs, latent_code, None, True)
+        swapped_img = self.target(None, dst_imgs, img_prior, None, True)
         raw_results = torch.cat((src_imgs, dst_imgs, swapped_img), 0)
 
         x_imgs = src_imgs.clone().detach()
@@ -352,17 +353,91 @@ class SimSwapDefense(nn.Module):
         for iter in range(iters):
             x_imgs.requires_grad = True
 
-            x_latent = self._get_latent_code(x_imgs)
-            style_loss = -l2_loss(x_latent, torch.ones_like(x_latent))
-            style_loss.backward()
+            x_prior = self._get_img_prior(x_imgs)
+            x_swapped_img = self.target(
+                None, dst_imgs.detach(), x_prior.detach(), None, True
+            )
+
+            swap_diff_loss = -l2_loss(x_swapped_img, torch.zeros_like(x_swapped_img))
+            style_loss = -l2_loss(x_prior, torch.ones_like(x_prior))
+            loss = loss_ratio[0] * swap_diff_loss + loss_ratio[1] * style_loss
+            loss.backward()
 
             x_imgs = x_imgs.clone().detach() + epsilon * x_imgs.grad.sign()
             x_imgs = torch.clamp(x_imgs, min=x_backup - limit, max=x_backup + limit)
-            self.logger.info(f"[Iter {iter:4}]loss: {style_loss:.5f}")
+            self.logger.info(
+                f"[Iter {iter:4}]loss: {loss:.5f}({swap_diff_loss:.5f},{style_loss:.5f})"
+            )
 
-        x_latent = self._get_latent_code(x_imgs).detach()
-        x_swapped_img = self.target(None, dst_imgs, x_latent, None, True)
+        x_prior = self._get_img_prior(x_imgs).detach()
+        x_swapped_img = self.target(None, dst_imgs, x_prior, None, True)
         protect_results = torch.cat((x_imgs, dst_imgs, x_swapped_img), 0)
+
+        results = torch.cat((raw_results, protect_results), dim=0)
+        from torchvision.utils import save_image
+
+        save_image(results, save_path, nrow=5)
+
+    def PGD_DST(
+        self,
+        args,
+        epsilon=3e-3,
+        limit=4e-2,
+        loss_ratio=[
+            1.0,
+            0.002,
+        ],
+        iters=100,
+    ):
+        save_path = f"../log/{args.ID}/{args.project}_pgd_dst.png"
+
+        self.target.to("cuda").eval()
+        l2_loss = nn.MSELoss().cuda()
+
+        src_imgs_path = [
+            f"{self.project_path}/crop_224/zrf.jpg",
+            f"{self.project_path}/crop_224/hzc.jpg",
+        ]
+        dst_imgs_path = [
+            f"{self.project_path}/crop_224/zjl.jpg",
+        ]
+
+        src_imgs = self._load_src_imgs(src_imgs_path)
+        dst_imgs = self._load_dst_imgs(dst_imgs_path)
+        img_prior = self._get_img_prior(src_imgs)
+
+        swapped_img = self.target(None, dst_imgs, img_prior, None, True)
+        raw_results = torch.cat((src_imgs, dst_imgs, swapped_img), 0)
+
+        x_imgs = dst_imgs.clone().detach()
+        x_backup = dst_imgs.clone().detach()
+        epsilon = epsilon * (torch.max(src_imgs) - torch.min(src_imgs)) / 2
+        for iter in range(iters):
+            self.target.zero_grad()
+            x_imgs.requires_grad = True
+
+            x_swapped_img = self.target(None, x_imgs, img_prior.detach(), None, True)
+            x_latent_code = self.target.netG.encoder(x_imgs)
+
+            swap_diff_loss = -l2_loss(x_swapped_img, torch.zeros_like(x_swapped_img))
+            latent_code_diff_loss = -l2_loss(
+                x_latent_code, torch.zeros_like(x_latent_code)
+            )
+
+            loss = (
+                loss_ratio[0] * swap_diff_loss + loss_ratio[1] * latent_code_diff_loss
+            )
+            loss.backward()
+
+            x_imgs = x_imgs.clone().detach() + epsilon * x_imgs.grad.sign()
+            x_imgs = torch.clamp(x_imgs, min=x_backup - limit, max=x_backup + limit)
+            self.logger.info(
+                f"[Iter {iter:4}]loss: {loss:.5f}({swap_diff_loss:.5f}, {latent_code_diff_loss:.5f})"
+            )
+
+        x_swapped_img = self.target(None, x_imgs, img_prior.detach(), None, True)
+
+        protect_results = torch.cat((src_imgs, x_imgs, x_swapped_img), 0)
 
         results = torch.cat((raw_results, protect_results), dim=0)
         from torchvision.utils import save_image
@@ -395,8 +470,8 @@ class SimSwapDefense(nn.Module):
         img_att = self._get_imgs_att(dst_imgs).detach()
         img_x = img_att.clone().detach()
 
-        latent_id = self._get_latent_code(img_id).detach()
-        latent_att = self._get_latent_code(img_att).detach()
+        latent_id = self._get_img_prior(img_id).detach()
+        latent_att = self._get_img_prior(img_att).detach()
 
         swap_img = self.target(None, img_att, latent_id, None, True).clone().detach()
 
@@ -405,9 +480,9 @@ class SimSwapDefense(nn.Module):
         for iter_ in range(iters):
             img_x.requires_grad = True
             self.target.zero_grad()
-            latent_x = self._get_latent_code(img_x)
+            latent_x = self._get_img_prior(img_x)
             pert_swap_img = self.target(
-                img_id, img_x, latent_id.detach(), latent_x.detach(), True
+                None, img_x, latent_id.detach(), None, True
             )
 
             pert_img_latent_code = self.target.netG.encoder2(img_x, latent_id.detach())
@@ -430,7 +505,7 @@ class SimSwapDefense(nn.Module):
                 f"[Iter {iter_:4}]loss: {G_loss:.5f}({swap_diff_loss:.5f}, {latent_code_diff_loss:.5f}"
             )
 
-        latent_x = self._get_latent_code(img_x)
+        latent_x = self._get_img_prior(img_x)
         pert_swap_img = self.target(img_id, img_x, latent_id, latent_x, True)
         groups = [img_att, swap_img, img_x - img_att, img_x, pert_swap_img]
         detrans = [False, False, False, False, False]
@@ -464,8 +539,8 @@ class SimSwapDefense(nn.Module):
         img_att = self._get_imgs_att(dst_imgs).detach()
         img_x = img_id.clone().detach()
 
-        latent_id = self._get_latent_code(img_id).detach()
-        latent_att = self._get_latent_code(img_att).detach()
+        latent_id = self._get_img_prior(img_id).detach()
+        latent_att = self._get_img_prior(img_att).detach()
 
         swap_img = (
             self.target(img_id, img_att, latent_id, latent_att, True).clone().detach()
@@ -476,7 +551,7 @@ class SimSwapDefense(nn.Module):
         for iter_ in range(iters):
             img_x.requires_grad = True
             self.target.zero_grad()
-            latent_x = self._get_latent_code(img_x)
+            latent_x = self._get_img_prior(img_x)
             pert_swap_img = self.target(None, img_x, latent_x.detach(), None, True)
 
             pert_img_latent_code = self.target.netG.encoder2(img_x, latent_id.detach())
@@ -497,7 +572,7 @@ class SimSwapDefense(nn.Module):
 
             self.logger.info(f"[Iter {iter_:4}]loss: {G_loss:.5f}({style_loss:.5f})")
 
-        latent_x = self._get_latent_code(img_x)
+        latent_x = self._get_img_prior(img_x)
         pert_swap_img = self.target(img_id, img_att, latent_x, latent_att, True)
         groups = [img_att, swap_img, img_x - img_id, img_id, pert_swap_img]
         detrans = [False, False, True, True, False]
@@ -545,12 +620,12 @@ class SimSwapDefense(nn.Module):
 
             img_att = self._get_imgs_att(dst_imgs)
             img_id = self._get_imgs_id(src_imgs)
-            latent_id = self._get_latent_code(img_id)
+            latent_id = self._get_img_prior(img_id)
             swap_img = self.target(None, img_att, latent_id, None, True)
 
             noise, pert_img_id = self.GAN_G(img_id)
             # noise, pert_img_id = self._get_pert_imgs_id(src_imgs)
-            pert_latent_id = self._get_latent_code(pert_img_id)
+            pert_latent_id = self._get_img_prior(pert_img_id)
             pert_swap_img = self.target(None, img_att, pert_latent_id, None, True)
 
             img_latent_code = self.target.netG.encoder(img_id)
@@ -642,11 +717,11 @@ class SimSwapDefense(nn.Module):
 
             img_att = self._get_imgs_att(dst_imgs)
             img_id = self._get_imgs_id(src_imgs)
-            latent_id = self._get_latent_code(img_id)
+            latent_id = self._get_img_prior(img_id)
             swap_img = self.target(img_id, img_att, latent_id, latent_id, True)
 
             noise, pert_img_id = self._get_pert_imgs_id(src_imgs)
-            pert_latent_id = self._get_latent_code(pert_img_id)
+            pert_latent_id = self._get_img_prior(pert_img_id)
             pert_swap_img = self.target(None, img_att, pert_latent_id, None, True)
 
             img_latent_code = self.target.netG.encoder(img_id)  # inout att
@@ -730,7 +805,7 @@ class SimSwapDefense(nn.Module):
         test_src_imgs, test_dst_imgs = self._get_random_pic_path(15)
         test_img_id = self._get_imgs_id(test_src_imgs)
         test_img_att = self._get_imgs_att(test_dst_imgs)
-        test_latent_id = self._get_latent_code(test_img_id)
+        test_latent_id = self._get_img_prior(test_img_id)
         test_swap_img = self.target(
             test_img_id, test_img_att, test_latent_id, None, True
         )
@@ -778,7 +853,7 @@ class SimSwapDefense(nn.Module):
 
             img_att = self._get_imgs_att(dst_imgs)
             img_id = self._get_imgs_id(src_imgs)
-            latent_id = self._get_latent_code(img_id)
+            latent_id = self._get_img_prior(img_id)
             swap_img = self.target(img_id, img_att, latent_id, None, True)
             img_latent_code = self.target.netG.encoder2(img_att, latent_id)
 

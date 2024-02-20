@@ -167,7 +167,7 @@ class Generator(nn.Module):
         x = self.last_layer(x)
         x = (x + 1) / 2
 
-        return x, torch.clamp(input + x, 0, 1)
+        return x  # modified face
 
     def decoder(self, input):
         x = input
@@ -299,18 +299,6 @@ class Generator_Adain_Upsample(nn.Module):
         return x
 
     def encoder(self, input):
-        x = input  # 3*224*224
-
-        x = self.first_layer(x)
-        x = self.down1(x)
-        x = self.down2(x)
-        x = self.down3(x)
-        if self.deep:
-            x = self.down4(x)
-
-        return x
-
-    def encoder2(self, input, id):
         x = input  # 3*224*224
 
         x = self.first_layer(x)
