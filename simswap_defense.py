@@ -39,18 +39,6 @@ class SimSwapDefense(nn.Module):
         self.GAN_G = Generator(input_nc=3, output_nc=3)
         self.GAN_D = Defense_Discriminator()
 
-    def _get_test_pic_path(self) -> tuple[list[str], list[str]]:
-        src_imgs_path = [
-            f"{self.project_path}/crop_224/zjl.jpg",
-            f"{self.project_path}/crop_224/2.jpg",
-        ]
-        dst_imgs_path = [
-            f"{self.project_path}/crop_224/ds.jpg",
-            f"{self.project_path}/crop_224/6.jpg",
-        ]
-
-        return src_imgs_path, dst_imgs_path
-
     def _get_random_pic_path(self, count: int = 1) -> tuple[list[str], list[str]]:
         people = os.listdir(self.dataset_path)
         src_people, dst_people = random.sample(people, 2)
@@ -73,7 +61,19 @@ class SimSwapDefense(nn.Module):
 
         return src_select_imgs, dst_select_imgs
 
-    def _get_imgs_id(self, imgs_path: list[str]) -> torch.tensor:
+    def _get_test_pic_path(self) -> tuple[list[str], list[str]]:
+        src_imgs_path = [
+            f"{self.project_path}/crop_224/zjl.jpg",
+            f"{self.project_path}/crop_224/2.jpg",
+        ]
+        dst_imgs_path = [
+            f"{self.project_path}/crop_224/ds.jpg",
+            f"{self.project_path}/crop_224/6.jpg",
+        ]
+
+        return src_imgs_path, dst_imgs_path
+
+    """def _get_imgs_id(self, imgs_path: list[str]) -> torch.tensor:
         imgs = [
             test_one_image.transformer_Arcface(Image.open(path).convert("RGB"))
             for path in imgs_path
@@ -83,7 +83,7 @@ class SimSwapDefense(nn.Module):
         img_transform = transforms.Compose([transforms.CenterCrop(224)])
         img_id = img_transform(img_id)
 
-        return img_id.cuda()
+        return img_id.cuda()"""
 
     def _load_src_imgs(self, imgs_path: list[str]) -> torch.tensor:
         transformer = transforms.Compose([transforms.ToTensor()])
@@ -95,7 +95,7 @@ class SimSwapDefense(nn.Module):
 
         return img_id.cuda()
 
-    def _get_imgs_att(self, imgs_path: list[str]) -> torch.tensor:
+    """def _get_imgs_att(self, imgs_path: list[str]) -> torch.tensor:
         imgs = [
             test_one_image.transformer(Image.open(path).convert("RGB"))
             for path in imgs_path
@@ -105,7 +105,7 @@ class SimSwapDefense(nn.Module):
         img_transform = transforms.Compose([transforms.CenterCrop(224)])
         img_att = img_transform(img_att)
 
-        return img_att.cuda()
+        return img_att.cuda()"""
 
     def _load_dst_imgs(self, imgs_path: list[str]) -> torch.tensor:
         transformer = transforms.Compose([transforms.ToTensor()])
@@ -124,7 +124,7 @@ class SimSwapDefense(nn.Module):
 
         return prior.cuda()
 
-    def _restore_swap_img(self, swap_img: torch.tensor) -> list[torch.tensor]:
+    """def _restore_swap_img(self, swap_img: torch.tensor) -> list[torch.tensor]:
         swap_imgs = torch.chunk(swap_img, chunks=swap_img.shape[0], dim=0)
         swap_imgs = list(swap_imgs)
 
@@ -139,24 +139,7 @@ class SimSwapDefense(nn.Module):
             swap_imgs[i] = swap_imgs[i][..., ::-1]
             swap_imgs[i] *= 255
 
-        return swap_imgs
-
-    def _save_void_imgs(
-        self,
-        src_imgs: list[str],
-        dst_imgs: list[str],
-        swap_imgs: list[torch.tensor],
-        save_path: str,
-    ) -> None:
-        groups = []
-        for i in range(len(src_imgs)):
-            group = np.concatenate(
-                (cv2.imread(src_imgs[i]), cv2.imread(dst_imgs[i]), swap_imgs[i]), axis=1
-            )
-            groups.append(group)
-
-        output = np.concatenate(groups, axis=0)
-        cv2.imwrite(save_path, output)
+        return swap_imgs"""
 
     def void(self, args):
         save_path = f"../log/{args.ID}/{args.project}_void.png"
@@ -170,6 +153,8 @@ class SimSwapDefense(nn.Module):
         src_prior = self._get_img_prior(src_imgs)
 
         swap_img = self.target(None, dst_imgs, src_prior, None, True)
+
+        self.logger.info(f"save the result at log/{args.ID}/{args.project}_void.png")
 
         results = torch.cat((src_imgs, dst_imgs, swap_img), dim=0)
         save_image(results, save_path, nrow=swap_count)
@@ -193,13 +178,11 @@ class SimSwapDefense(nn.Module):
             people2_imgs, k=min_count
         )
 
-    def _get_pert_imgs_id(
-        self, imgs_path: list[str]
-    ) -> tuple[torch.tensor, torch.tensor]:
+    def _get_pert_imgs(self, imgs_path: list[str]) -> tuple[torch.tensor, torch.tensor]:
         img_id = self._get_imgs_id(imgs_path)
-        noise, pert_imgs = self.GAN_G(img_id)
+        pert_imgs = self.GAN_G(img_id)
 
-        return noise, pert_imgs
+        return pert_imgs
 
     def _get_shifted_imgs(self, img: torch.tensor) -> torch.tensor:
         shifted_img = torch.roll(img.clone().detach(), shifts=(-1, 1), dims=(2, 3))
@@ -219,7 +202,7 @@ class SimSwapDefense(nn.Module):
         crop_img = img[mid_y - ch2 : mid_y + ch2, mid_x - cw2 : mid_x + cw2]
         return crop_img
 
-    def _save_gan_imgs(
+    """def _save_gan_imgs(
         self,
         src_imgs: list[str],
         dst_imgs: list[str],
@@ -247,7 +230,7 @@ class SimSwapDefense(nn.Module):
             groups.append(group)
 
         output = np.concatenate(groups[:save_count], axis=0)
-        cv2.imwrite(save_path, output)
+        cv2.imwrite(save_path, output)"""
 
     def _save_checkpoint(
         self,
@@ -271,7 +254,7 @@ class SimSwapDefense(nn.Module):
             path,
         )
 
-    def _restore_img(
+    """def _restore_img(
         self, swap_img: torch.tensor, detransform=False
     ) -> list[torch.tensor]:
         swap_imgs = torch.chunk(swap_img, chunks=swap_img.shape[0], dim=0)
@@ -289,9 +272,9 @@ class SimSwapDefense(nn.Module):
             swap_imgs[i] = np.array(swap_imgs[i])
             swap_imgs[i] = swap_imgs[i][..., ::-1]
             swap_imgs[i] *= 255
-        return swap_imgs
+        return swap_imgs"""
 
-    def _save_imgs(
+    """def _save_imgs(
         self,
         imgs: list[list[torch.tensor]],
         save_path: str,
@@ -311,7 +294,7 @@ class SimSwapDefense(nn.Module):
             groups.append(np.concatenate(row_groups, axis=0))
 
         output = np.concatenate(groups, axis=1)
-        cv2.imwrite(save_path, output)
+        cv2.imwrite(save_path, output)"""
 
     def PGD_SRC(
         self,
@@ -320,7 +303,7 @@ class SimSwapDefense(nn.Module):
         limit=1e-1,
         loss_ratio=[
             1,
-            0.2,
+            1,
         ],
         iters=100,
     ):
@@ -332,17 +315,24 @@ class SimSwapDefense(nn.Module):
         src_imgs_path = [
             f"{self.project_path}/crop_224/zjl.jpg",
         ]
+        tgt_imgs_path = [
+            f"{self.project_path}/crop_224/james.jpg",
+        ]
         dst_imgs_path = [
             f"{self.project_path}/crop_224/zrf.jpg",
-            f"{self.project_path}/crop_224/hzc.jpg",
         ]
 
         src_imgs = self._load_src_imgs(src_imgs_path)
+        tgt_imgs = self._load_src_imgs(tgt_imgs_path)
         dst_imgs = self._load_dst_imgs(dst_imgs_path)
-        img_prior = self._get_img_prior(src_imgs)
+        src_prior = self._get_img_prior(src_imgs)
+        tgt_prior = self._get_img_prior(tgt_imgs)
 
-        swapped_img = self.target(None, dst_imgs, img_prior, None, True)
-        raw_results = torch.cat((src_imgs, dst_imgs, swapped_img), 0)
+        src_swapped_img = self.target(None, dst_imgs, src_prior, None, True)
+        tgt_swapped_img = self.target(None, dst_imgs, tgt_prior, None, True)
+        raw_results = torch.cat(
+            (src_imgs, tgt_imgs, dst_imgs, src_swapped_img, tgt_swapped_img), 0
+        )
 
         x_imgs = src_imgs.clone().detach()
         x_backup = src_imgs.clone().detach()
@@ -355,10 +345,10 @@ class SimSwapDefense(nn.Module):
                 None, dst_imgs.detach(), x_prior.detach(), None, True
             )
 
-            swap_diff_loss = -l2_loss(x_swapped_img, torch.zeros_like(x_swapped_img))
-            style_loss = -l2_loss(x_prior, torch.ones_like(x_prior))
+            swap_diff_loss = l2_loss(x_swapped_img, tgt_swapped_img)
+            style_loss = l2_loss(x_prior, tgt_prior)
             loss = loss_ratio[0] * swap_diff_loss + loss_ratio[1] * style_loss
-            loss.backward()
+            loss.backward(retain_graph=True)
 
             x_imgs = x_imgs.clone().detach() + epsilon * x_imgs.grad.sign()
             x_imgs = torch.clamp(x_imgs, min=x_backup - limit, max=x_backup + limit)
@@ -368,11 +358,11 @@ class SimSwapDefense(nn.Module):
 
         x_prior = self._get_img_prior(x_imgs).detach()
         x_swapped_img = self.target(None, dst_imgs, x_prior, None, True)
-        protect_results = torch.cat((x_imgs, dst_imgs, x_swapped_img), 0)
+        protect_results = torch.cat((x_imgs, x_swapped_img), 0)
+
+        self.logger.info(f"save the result at log/{args.ID}/{args.project}_pgd_src.png")
 
         results = torch.cat((raw_results, protect_results), dim=0)
-        from torchvision.utils import save_image
-
         save_image(results, save_path, nrow=5)
 
     def PGD_DST(
@@ -483,7 +473,7 @@ class SimSwapDefense(nn.Module):
             swap_img = self.target(None, img_att, latent_id, None, True)
 
             noise, pert_img_id = self.GAN_G(img_id)
-            # noise, pert_img_id = self._get_pert_imgs_id(src_imgs)
+            # noise, pert_img_id = self._get_pert_imgs(src_imgs)
             pert_latent_id = self._get_img_prior(pert_img_id)
             pert_swap_img = self.target(None, img_att, pert_latent_id, None, True)
 
@@ -579,7 +569,7 @@ class SimSwapDefense(nn.Module):
             latent_id = self._get_img_prior(img_id)
             swap_img = self.target(img_id, img_att, latent_id, latent_id, True)
 
-            noise, pert_img_id = self._get_pert_imgs_id(src_imgs)
+            noise, pert_img_id = self._get_pert_imgs(src_imgs)
             pert_latent_id = self._get_img_prior(pert_img_id)
             pert_swap_img = self.target(None, img_att, pert_latent_id, None, True)
 
