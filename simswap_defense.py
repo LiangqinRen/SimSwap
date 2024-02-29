@@ -39,18 +39,18 @@ class SimSwapDefense(nn.Module):
         self.GAN_G = Generator(input_nc=3, output_nc=3)
         self.GAN_D = Defense_Discriminator()
 
-    def _get_random_pic_path(self, count: int = 1) -> tuple[list[str], list[str]]:
+    def _get_random_pic_path(self, batch_size: int = 1) -> tuple[list[str], list[str]]:
         people = os.listdir(self.dataset_path)
         src_people, dst_people = random.sample(people, 2)
 
         src_imgs = os.listdir(f"{self.dataset_path}/{src_people}")
         dst_imgs = os.listdir(f"{self.dataset_path}/{dst_people}")
-        count = min(len(src_imgs), len(dst_imgs), count)
+        batch_size = min(len(src_imgs), len(dst_imgs), batch_size)
 
-        assert count > 0
+        assert batch_size > 0
 
-        src_select_imgs = random.sample(src_imgs, count)
-        dst_select_imgs = random.sample(dst_imgs, count)
+        src_select_imgs = random.sample(src_imgs, batch_size)
+        dst_select_imgs = random.sample(dst_imgs, batch_size)
 
         src_select_imgs = [
             f"{self.dataset_path}/{src_people}/{img}" for img in src_select_imgs
@@ -61,30 +61,6 @@ class SimSwapDefense(nn.Module):
 
         return src_select_imgs, dst_select_imgs
 
-    def _get_test_pic_path(self) -> tuple[list[str], list[str]]:
-        src_imgs_path = [
-            f"{self.project_path}/crop_224/zjl.jpg",
-            f"{self.project_path}/crop_224/2.jpg",
-        ]
-        dst_imgs_path = [
-            f"{self.project_path}/crop_224/ds.jpg",
-            f"{self.project_path}/crop_224/6.jpg",
-        ]
-
-        return src_imgs_path, dst_imgs_path
-
-    """def _get_imgs_id(self, imgs_path: list[str]) -> torch.tensor:
-        imgs = [
-            test_one_image.transformer_Arcface(Image.open(path).convert("RGB"))
-            for path in imgs_path
-        ]
-
-        img_id = torch.stack(imgs)
-        img_transform = transforms.Compose([transforms.CenterCrop(224)])
-        img_id = img_transform(img_id)
-
-        return img_id.cuda()"""
-
     def _load_src_imgs(self, imgs_path: list[str]) -> torch.tensor:
         transformer = transforms.Compose([transforms.ToTensor()])
         imgs = [transformer(Image.open(path).convert("RGB")) for path in imgs_path]
@@ -94,18 +70,6 @@ class SimSwapDefense(nn.Module):
         img_id = img_transform(img_id)
 
         return img_id.cuda()
-
-    """def _get_imgs_att(self, imgs_path: list[str]) -> torch.tensor:
-        imgs = [
-            test_one_image.transformer(Image.open(path).convert("RGB"))
-            for path in imgs_path
-        ]
-
-        img_att = torch.stack(imgs)
-        img_transform = transforms.Compose([transforms.CenterCrop(224)])
-        img_att = img_transform(img_att)
-
-        return img_att.cuda()"""
 
     def _load_dst_imgs(self, imgs_path: list[str]) -> torch.tensor:
         transformer = transforms.Compose([transforms.ToTensor()])
@@ -123,23 +87,6 @@ class SimSwapDefense(nn.Module):
         prior = prior / torch.norm(prior, p=2, dim=1)[0]
 
         return prior.cuda()
-
-    """def _restore_swap_img(self, swap_img: torch.tensor) -> list[torch.tensor]:
-        swap_imgs = torch.chunk(swap_img, chunks=swap_img.shape[0], dim=0)
-        swap_imgs = list(swap_imgs)
-
-        for i in range(len(swap_imgs)):
-            swap_imgs[i] = swap_imgs[i].view(
-                swap_imgs[i].shape[1], swap_imgs[i].shape[2], swap_imgs[i].shape[3]
-            )
-            swap_imgs[i] = swap_imgs[i].detach()
-            swap_imgs[i] = swap_imgs[i].permute(1, 2, 0)
-            swap_imgs[i] = swap_imgs[i].to("cpu")
-            swap_imgs[i] = np.array(swap_imgs[i])
-            swap_imgs[i] = swap_imgs[i][..., ::-1]
-            swap_imgs[i] *= 255
-
-        return swap_imgs"""
 
     def void(self, args):
         save_path = f"../log/{args.ID}/{args.project}_void.png"
@@ -159,25 +106,6 @@ class SimSwapDefense(nn.Module):
         results = torch.cat((src_imgs, dst_imgs, swap_img), dim=0)
         save_image(results, save_path, nrow=swap_count)
 
-    def _get_train_pic_path(self, batch_size: int) -> tuple[list[str], list[str]]:
-        people = os.listdir(self.dataset_path)
-        people1, people2 = random.sample(people, 2)  # "trump", "cage"
-
-        people1_imgs = [
-            f"{self.dataset_path}/{people1}/{i}"
-            for i in os.listdir(f"{self.dataset_path}/{people1}")
-        ]
-        people2_imgs = [
-            f"{self.dataset_path}/{people2}/{i}"
-            for i in os.listdir(f"{self.dataset_path}/{people2}")
-        ]
-
-        min_count = min(batch_size, len(people1_imgs), len(people2_imgs))
-
-        return random.sample(people1_imgs, k=min_count), random.sample(
-            people2_imgs, k=min_count
-        )
-
     def _get_pert_imgs(self, imgs_path: list[str]) -> tuple[torch.tensor, torch.tensor]:
         img_id = self._get_imgs_id(imgs_path)
         pert_imgs = self.GAN_G(img_id)
@@ -187,8 +115,6 @@ class SimSwapDefense(nn.Module):
     def _get_shifted_imgs(self, img: torch.tensor) -> torch.tensor:
         shifted_img = torch.roll(img.clone().detach(), shifts=(-1, 1), dims=(2, 3))
         rotated_img = torchvision.transforms.functional.rotate(shifted_img, 330)
-        # scaled_img = torch.nn.functional.interpolate(rotated_img, 54)
-        # manipulated_face = F.pad(scaled_img, (5, 5, 5, 5), "constant", 0)
 
         return rotated_img
 
@@ -201,36 +127,6 @@ class SimSwapDefense(nn.Module):
         cw2, ch2 = int(crop_width / 2), int(crop_height / 2)
         crop_img = img[mid_y - ch2 : mid_y + ch2, mid_x - cw2 : mid_x + cw2]
         return crop_img
-
-    """def _save_gan_imgs(
-        self,
-        src_imgs: list[str],
-        dst_imgs: list[str],
-        swap_imgs: list[torch.tensor],
-        noises: list[torch.tensor],
-        pert_imgs: list[torch.tensor],
-        pert_swap_imgs: list[torch.tensor],
-        save_count: int,
-        save_path: str,
-    ) -> None:
-        groups = []
-        for i in range(len(src_imgs[:save_count])):
-            group = np.concatenate(
-                (
-                    self._center_crop(cv2.imread(src_imgs[i]), [224, 224]),
-                    self._center_crop(cv2.imread(dst_imgs[i]), [224, 224]),
-                    # cv2.imread(dst_imgs[i]),
-                    swap_imgs[i],
-                    noises[i],
-                    pert_imgs[i],
-                    pert_swap_imgs[i],
-                ),
-                axis=1,
-            )
-            groups.append(group)
-
-        output = np.concatenate(groups[:save_count], axis=0)
-        cv2.imwrite(save_path, output)"""
 
     def _save_checkpoint(
         self,
@@ -248,48 +144,6 @@ class SimSwapDefense(nn.Module):
             },
             path,
         )
-
-    """def _restore_img(
-        self, swap_img: torch.tensor, detransform=False
-    ) -> list[torch.tensor]:
-        swap_imgs = torch.chunk(swap_img, chunks=swap_img.shape[0], dim=0)
-        swap_imgs = list(swap_imgs)
-
-        for i in range(len(swap_imgs)):
-            if detransform:
-                swap_imgs[i] = test_one_image.detransformer(swap_imgs[i])
-            swap_imgs[i] = swap_imgs[i].view(
-                swap_imgs[i].shape[1], swap_imgs[i].shape[2], swap_imgs[i].shape[3]
-            )
-            swap_imgs[i] = swap_imgs[i].detach()
-            swap_imgs[i] = swap_imgs[i].permute(1, 2, 0)
-            swap_imgs[i] = swap_imgs[i].to("cpu")
-            swap_imgs[i] = np.array(swap_imgs[i])
-            swap_imgs[i] = swap_imgs[i][..., ::-1]
-            swap_imgs[i] *= 255
-        return swap_imgs"""
-
-    """def _save_imgs(
-        self,
-        imgs: list[list[torch.tensor]],
-        save_path: str,
-        save_count: str = 3,
-        rows: int = 5,
-    ) -> None:
-        groups = []
-        for i in range(save_count):
-            row_groups = []
-            for row in range(rows):
-                set_of_imgs = []
-                for j in range(len(imgs)):
-                    img_group = imgs[j]
-                    set_of_imgs.append(img_group[i * rows + row])
-                group = np.concatenate(set_of_imgs, axis=1)
-                row_groups.append(group)
-            groups.append(np.concatenate(row_groups, axis=0))
-
-        output = np.concatenate(groups, axis=1)
-        cv2.imwrite(save_path, output)"""
 
     def PGD_SRC(
         self,
@@ -432,11 +286,133 @@ class SimSwapDefense(nn.Module):
         results = torch.cat((raw_results, protect_results), dim=0)
         save_image(results, save_path, nrow=5)
 
+    def GAN_SRC(
+        self,
+        args,
+        lr_g=5e-4,
+        loss_ratio=[0.1, 1, 1],
+        clipped=[0.01, 0.01],
+    ):
+        self.GAN_G.load_state_dict(self.target.netG.state_dict(), strict=False)
+        optimizer_G = optim.Adam(
+            [
+                {"params": self.GAN_G.up1.parameters()},
+                {"params": self.GAN_G.up2.parameters()},
+                {"params": self.GAN_G.up3.parameters()},
+                {"params": self.GAN_G.up4.parameters()},
+                {"params": self.GAN_G.last_layer.parameters()},
+            ],
+            lr=lr_g,
+            betas=(0.5, 0.999),
+        )
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer_G, args.epoch)
+
+        self.target.to("cuda").eval()
+        l2_loss = nn.MSELoss().cuda()
+
+        for param in self.GAN_G.first_layer.parameters():
+            param.requires_grad = False
+        for param in self.GAN_G.down1.parameters():
+            param.requires_grad = False
+        for param in self.GAN_G.down2.parameters():
+            param.requires_grad = False
+        for param in self.GAN_G.down3.parameters():
+            param.requires_grad = False
+        for param in self.GAN_G.down4.parameters():
+            param.requires_grad = False
+
+        best_loss = float("inf")
+        for epoch in range(args.epoch):
+            save_path = f"../log/{args.ID}/{args.project}_gan_src_{epoch}.png"
+
+            self.GAN_G.to("cuda").train()
+
+            src_imgs_path, dst_imgs_path = self._get_random_pic_path(args.batch_size)
+
+            src_imgs = self._load_src_imgs(src_imgs_path)
+            src_prior = self._get_img_prior(src_imgs)
+            dst_imgs = self._load_dst_imgs(dst_imgs_path)
+
+            swapped_imgs = self.target(None, dst_imgs.detach(), src_prior, None, True)
+
+            pert_src_imgs = self.GAN_G(src_imgs)
+            pert_src_prior = self._get_img_prior(pert_src_imgs)
+            pert_swapped_imgs = self.target(
+                None, dst_imgs.detach(), pert_src_prior, None, True
+            )
+
+            self.GAN_G.zero_grad()
+            pert_diff_loss = l2_loss(src_imgs, pert_src_imgs)
+            swap_diff_loss = -torch.clamp(
+                l2_loss(swapped_imgs, pert_swapped_imgs), 0.0, clipped[0]
+            )
+            prior_diff_loss = -torch.clamp(
+                l2_loss(src_prior, pert_src_prior), 0.0, clipped[1]
+            )
+
+            G_loss = (
+                loss_ratio[0] * pert_diff_loss
+                + loss_ratio[1] * swap_diff_loss
+                + loss_ratio[2] * prior_diff_loss
+            )
+            G_loss.backward()
+            optimizer_G.step()
+            scheduler.step()
+
+            self.logger.info(
+                f"[Epoch {epoch:4}]loss: {G_loss:.5f}({pert_diff_loss:.5f}, {swap_diff_loss:.5f}, {prior_diff_loss:.5f})"
+            )
+
+            if epoch % args.save_interval == 0:
+                with torch.no_grad():
+                    self.GAN_G.eval()
+                    self.target.eval()
+
+                    src_imgs_path = [
+                        f"{self.project_path}/crop_224/zjl.jpg",
+                    ]
+                    dst_imgs_path = [
+                        f"{self.project_path}/crop_224/zrf.jpg",
+                    ]
+
+                    src_imgs = self._load_src_imgs(src_imgs_path)
+                    dst_imgs = self._load_dst_imgs(dst_imgs_path)
+                    src_prior = self._get_img_prior(src_imgs)
+
+                    src_swapped_img = self.target(None, dst_imgs, src_prior, None, True)
+                    raw_results = torch.cat(
+                        (
+                            src_imgs,
+                            dst_imgs,
+                            src_swapped_img,
+                        ),
+                        0,
+                    )
+
+                    x_imgs = self.GAN_G(src_imgs)
+                    x_prior = self._get_img_prior(x_imgs)
+                    x_swapped_img = self.target(None, dst_imgs, x_prior, None, True)
+                    protect_results = torch.cat((x_imgs, x_swapped_img), 0)
+
+                    self.logger.info(
+                        f"save the result at log/{args.ID}/{args.project}_gan_src_{epoch}.png"
+                    )
+
+                    results = torch.cat((raw_results, protect_results), dim=0)
+                    save_image(results, save_path, nrow=3)
+
+            if G_loss.data < best_loss:
+                best_loss = G_loss.data
+                log_save_path = f"../log/{args.ID}/{args.project}.pth"
+                checkpoint_save_path = f"../checkpoint/{args.project}.pth"
+                self._save_checkpoint(args, log_save_path, optimizer_G, G_loss)
+                self._save_checkpoint(args, checkpoint_save_path, optimizer_G, G_loss)
+
     def GAN_DST(
         self,
         args,
         lr_g=5e-4,
-        loss_ratio=[0.1, 0.9, 0.002, 0.0, 0.0],
+        loss_ratio=[0.1, 0.9, 0.002, 0.0],
         clipped=[0.05, 2.0],
     ):
         self.GAN_G.load_state_dict(self.target.netG.state_dict(), strict=False)
@@ -473,7 +449,7 @@ class SimSwapDefense(nn.Module):
 
             self.GAN_G.to("cuda").train()
 
-            src_imgs_path, dst_imgs_path = self._get_train_pic_path(args.batch_size)
+            src_imgs_path, dst_imgs_path = self._get_random_pic_path(args.batch_size)
 
             src_imgs = self._load_src_imgs(src_imgs_path)
             dst_imgs = self._load_dst_imgs(dst_imgs_path)
@@ -575,10 +551,10 @@ class SimSwapDefense(nn.Module):
         self.GAN_G.load_state_dict(self.target.netG.state_dict(), strict=False)
         self.target.eval()
         test_src_imgs, test_dst_imgs = self._get_random_pic_path(15)
-        test_img_id = self._get_imgs_id(test_src_imgs)
-        test_img_att = self._get_imgs_att(test_dst_imgs)
-        test_latent_id = self._get_img_prior(test_img_id)
-        test_swap_img = self.target(None, test_img_att, test_latent_id, None, True)
+        test_img_id = self._load_src_imgs(test_src_imgs)
+        test_img_att = self._load_dst_imgs(test_dst_imgs)
+        test_prior = self._get_img_prior(test_img_id)
+        test_swap_img = self.target(None, test_img_att, test_prior, None, True)
 
         # optimizer_G = optim.Adam(self.GAN_G.parameters(), lr=lr_g, betas=(0.5, 0.999))
         # only optimize the parameters of the up1, up2, up3, up4, last_layer in the generator
@@ -618,11 +594,11 @@ class SimSwapDefense(nn.Module):
         for epoch in range(args.epoch):
             self.GAN_G.train()
 
-            src_imgs, dst_imgs = self._get_train_pic_path(args.batch_size)
+            src_imgs, dst_imgs = self._get_random_pic_path(args.batch_size)
             save_path = f"../log/{args.ID}/{args.project}_gan_{epoch}.png"
 
-            img_att = self._get_imgs_att(dst_imgs)
-            img_id = self._get_imgs_id(src_imgs)
+            img_att = self._load_dst_imgs(dst_imgs)
+            img_id = self._load_src_imgs(src_imgs)
             latent_id = self._get_img_prior(img_id)
             swap_img = self.target(img_id, img_att, latent_id, None, True)
             img_latent_code = self.target.netG.encoder(img_att)
@@ -667,11 +643,10 @@ class SimSwapDefense(nn.Module):
                     self.GAN_G.eval()
                     self.target.eval()
                     test_protect_img = self.GAN_G(test_img_att)
-                    # print(type(test_protect_img))
                     test_pert_swap_img = self.target(
-                        None, test_protect_img, test_latent_id, None, True
+                        None, test_protect_img, test_prior, None, True
                     )
-                    groups = [
+                    """groups = [
                         test_img_att,
                         test_swap_img,
                         test_protect_img,
@@ -682,15 +657,22 @@ class SimSwapDefense(nn.Module):
                         self._restore_img(group, detransform=detrans[i])
                         for i, group in enumerate(groups)
                     ]
-                    self._save_imgs(save_groups, save_path)
+                    self._save_imgs(save_groups, save_path)"""
+
+                    results = torch.cat(
+                        (
+                            test_img_att,
+                            test_swap_img,
+                            test_protect_img,
+                            test_pert_swap_img,
+                        ),
+                        dim=0,
+                    )
+                    save_image(results, save_path, nrow=15)
 
             if G_loss.data < best_loss:
                 best_loss = G_loss.data
                 log_save_path = f"../log/{args.ID}/{args.project}.pth"
                 checkpoint_save_path = f"../checkpoint/{args.project}.pth"
-                self._save_checkpoint(
-                    args, log_save_path, optimizer_G, optimizer_G, G_loss, G_loss
-                )
-                self._save_checkpoint(
-                    args, checkpoint_save_path, optimizer_G, optimizer_G, G_loss, G_loss
-                )
+                self._save_checkpoint(args, log_save_path, optimizer_G, G_loss)
+                self._save_checkpoint(args, checkpoint_save_path, optimizer_G, G_loss)
