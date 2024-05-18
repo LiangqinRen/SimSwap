@@ -56,7 +56,7 @@ class TestOptions(BaseOptions):
         self.parser.add_argument(
             "--Arc_path",
             type=str,
-            default="../third_party/SimSwap/arcface_model/arcface_checkpoint.tar",
+            default="arcface_model/arcface_checkpoint.tar",
             help="run ONNX model via TRT",
         )
         self.parser.add_argument(

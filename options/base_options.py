@@ -30,7 +30,7 @@ class BaseOptions:
         self.parser.add_argument(
             "--checkpoints_dir",
             type=str,
-            default="../third_party/SimSwap/checkpoints",
+            default="checkpoints",
             help="models are saved here",
         )
         # self.parser.add_argument('--model', type=str, default='pix2pixHD', help='which model to use')
