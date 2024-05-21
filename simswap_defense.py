@@ -1,5 +1,6 @@
 import os
 import random
+import time
 import torch
 import torchvision
 
@@ -40,7 +41,7 @@ class SimSwapDefense(nn.Module):
 
         return imgs.cuda()
 
-    def _get_img_identity(self, img: torch.tensor) -> torch.tensor:
+    def _get_imgs_identity(self, img: torch.tensor) -> torch.tensor:
         img_downsample = F.interpolate(img, size=(112, 112))
         prior = self.target.netArc(img_downsample)
         prior = prior / torch.norm(prior, p=2, dim=1)[0]
@@ -75,13 +76,13 @@ class SimSwapDefense(nn.Module):
 
         source_img = self._load_imgs([join(self.args.data_dir, self.args.swap_source)])
         target_img = self._load_imgs([join(self.args.data_dir, self.args.swap_target)])
-        source_identity = self._get_img_identity(source_img)
+        source_identity = self._get_imgs_identity(source_img)
 
         swap_img = self.target(None, target_img, source_identity, None, True)
 
         self._save_imgs([source_img, target_img, swap_img])
 
-    def pgd_src_single(self, loss_weights=[1, 1, 1]):
+    def pgd_src_single(self, loss_weights=[1, 1]):
         self.logger.info(f"loss_weights: {loss_weights}")
 
         self.target.cuda().eval()
@@ -89,13 +90,9 @@ class SimSwapDefense(nn.Module):
 
         source_img = self._load_imgs([join(self.args.data_dir, self.args.pgd_source)])
         mimic_img = self._load_imgs([join(self.args.data_dir, self.args.pgd_mimic)])
-        target_img = self._load_imgs([join(self.args.data_dir, self.args.pgd_target)])
 
-        source_identity = self._get_img_identity(source_img)
-        mimic_identity = self._get_img_identity(mimic_img)
-
-        source_swap_img = self.target(None, target_img, source_identity, None, True)
-        mimic_swap_img = self.target(None, target_img, mimic_identity, None, True)
+        source_identity = self._get_imgs_identity(source_img)
+        mimic_identity = self._get_imgs_identity(mimic_img)
 
         x_img = source_img.clone().detach()
         x_backup = source_img.clone().detach()
@@ -105,20 +102,13 @@ class SimSwapDefense(nn.Module):
         for iter in range(self.args.pgd_epochs):
             x_img.requires_grad = True
 
-            x_identity = self._get_img_identity(x_img)
-            x_swap_img = self.target(
-                None, target_img.detach(), x_identity.detach(), None, True
-            )
-
+            x_identity = self._get_imgs_identity(x_img)
             pert_diff_loss = l2_loss(x_img, x_backup.detach())
-            swap_diff_loss = l2_loss(x_swap_img, mimic_swap_img.detach())
             identity_diff_loss = l2_loss(x_identity, mimic_identity.detach())
-
             loss = (
-                loss_weights[0] * pert_diff_loss
-                + loss_weights[1] * swap_diff_loss
-                + loss_weights[2] * identity_diff_loss
+                loss_weights[0] * pert_diff_loss + loss_weights[1] * identity_diff_loss
             )
+
             loss.backward(retain_graph=True)
 
             x_img = x_img.clone().detach() + epsilon * x_img.grad.sign()
@@ -128,10 +118,15 @@ class SimSwapDefense(nn.Module):
                 max=x_backup + self.args.pgd_limit,
             )
             self.logger.info(
-                f"[Iter {iter:4}]loss: {loss:.5f}({loss_weights[0] * pert_diff_loss.item():.5f}, {loss_weights[1] * swap_diff_loss.item():.5f}, {loss_weights[2] * identity_diff_loss.item():.5f})"
+                f"[Iter {iter:4}]loss: {loss:.5f}({loss_weights[0] * pert_diff_loss.item():.5f}, {loss_weights[1] * identity_diff_loss.item():.5f})"
             )
 
-        x_identity = self._get_img_identity(x_img).detach()
+        target_img = self._load_imgs([join(self.args.data_dir, self.args.pgd_target)])
+
+        source_swap_img = self.target(None, target_img, source_identity, None, True)
+        mimic_swap_img = self.target(None, target_img, mimic_identity, None, True)
+
+        x_identity = self._get_imgs_identity(x_img).detach()
         x_swap_img = self.target(None, target_img, x_identity, None, True)
 
         self._save_imgs(
@@ -146,8 +141,103 @@ class SimSwapDefense(nn.Module):
             ]
         )
 
-    def pgd_src_multi(self):
-        pass
+    def _get_random_imgs_path(self) -> tuple[list[str], list[str]]:
+        dirs = os.listdir(self.dataset_dir)
+        selected_people = random.sample(
+            dirs, self.args.pgd_batch_size * self.args.pgd_epochs * 2
+        )
+        source_imgs_path, target_imgs_path = [], []
+
+        for people in selected_people[
+            : self.args.pgd_batch_size * self.args.pgd_epochs
+        ]:
+            imgs_path = os.listdir(join(self.dataset_dir, people))
+            selected_imgs_path = random.sample(
+                imgs_path, min(len(imgs_path), self.args.pgd_person_imgs)
+            )
+            source_imgs_path.extend(
+                [join(self.dataset_dir, people, path) for path in selected_imgs_path]
+            )
+
+        for people in selected_people[
+            self.args.pgd_batch_size * self.args.pgd_epochs :
+        ]:
+            imgs_path = os.listdir(join(self.dataset_dir, people))
+            selected_imgs_path = random.sample(
+                imgs_path, min(len(imgs_path), self.args.pgd_person_imgs)
+            )
+            target_imgs_path.extend(
+                [join(self.dataset_dir, people, path) for path in selected_imgs_path]
+            )
+
+        return source_imgs_path, target_imgs_path
+
+    def pgd_src_multi(self, loss_weights=[1, 1]):
+        self.logger.info(f"loss_weights: {loss_weights}")
+
+        self.target.cuda().eval()
+        l2_loss = nn.MSELoss().cuda()
+
+        source_imgs_path, target_imgs_path = self._get_random_imgs_path()
+
+        path_index = 0
+        batch_size = self.args.pgd_batch_size
+        image_dir = join(self.args.log_dir, "image")
+        mimic_img = self._load_imgs([join(self.args.data_dir, self.args.pgd_mimic)])
+        mimic_identity = self._get_imgs_identity(mimic_img)
+        mimic_identity_expand = mimic_identity.detach().expand(batch_size, 512)
+        for batch_index in range(self.args.pgd_batch_count):
+            src_imgs_path = source_imgs_path[path_index : path_index + batch_size]
+            tgt_imgs_path = target_imgs_path[path_index : path_index + batch_size]
+
+            src_imgs = self._load_imgs(src_imgs_path)
+            tgt_imgs = self._load_imgs(tgt_imgs_path)
+
+            src_identity = self._get_imgs_identity(src_imgs)
+
+            x_imgs = src_imgs.clone().detach()
+            epsilon = (
+                self.args.pgd_epsilon * (torch.max(src_imgs) - torch.min(src_imgs)) / 2
+            )
+
+            for epoch in range(self.args.pgd_epochs):
+                x_imgs.requires_grad = True
+
+                x_identity = self._get_imgs_identity(x_imgs)
+                pert_diff_loss = l2_loss(x_imgs, src_imgs.detach())
+                identity_diff_loss = l2_loss(x_identity, mimic_identity_expand.detach())
+
+                loss = (
+                    loss_weights[0] * pert_diff_loss
+                    + loss_weights[1] * identity_diff_loss
+                )
+                loss.backward()
+
+                x_imgs = x_imgs.clone().detach() + epsilon * x_imgs.grad.sign()
+                x_imgs = torch.clamp(
+                    x_imgs,
+                    min=src_imgs - self.args.pgd_limit,
+                    max=src_imgs + self.args.pgd_limit,
+                )
+
+                self.logger.info(
+                    f"[Batch {batch_index+1:3}/{self.args.pgd_batch_count:3}][Iter {epoch+1:3}/{self.args.pgd_epochs:3}]loss: {loss:.5f}({loss_weights[0] * pert_diff_loss.item():.5f}, {loss_weights[1] * identity_diff_loss.item():.5f})"
+                )
+
+            x_identity = self._get_imgs_identity(x_imgs)
+            x_swap_img = self.target(None, tgt_imgs, x_identity, None, True)
+
+            src_swap_imgs = self.target(None, tgt_imgs, src_identity, None, True)
+            results = torch.cat(
+                (src_imgs, tgt_imgs, src_swap_imgs, x_imgs, x_swap_img), dim=0
+            )
+            save_image(
+                results,
+                join(image_dir, f"{batch_index+1}_compare.png"),
+                nrow=batch_size,
+            )
+
+            path_index += batch_size
 
 
 class SimSwapDefensee(nn.Module):

@@ -84,7 +84,8 @@ def get_argparser():
     parser.add_argument("--pgd_epsilon", type=float, default=1e-2)
     parser.add_argument("--pgd_limit", type=float, default=5e-2)
     parser.add_argument("--pgd_log_interval", type=int, default=10)
-    parser.add_argument("--pgd_person_conut", type=int, default=50)
+    parser.add_argument("--pgd_batch_size", type=int, default=10)
+    parser.add_argument("--pgd_batch_count", type=int, default=50)
     parser.add_argument("--pgd_person_imgs", type=int, default=10)
 
     parser.add_argument("--gan_model", type=str)
