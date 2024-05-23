@@ -1,6 +1,8 @@
 import os
 import random
 import time
+import math
+
 import torch
 import torchvision
 
@@ -16,6 +18,9 @@ from torchvision.utils import save_image
 from options.test_options import TestOptions
 from models.models import create_model
 from models.fs_networks import Generator
+from tqdm import tqdm
+
+from evaluate import Utility, Efficiency, Evaluate
 
 
 class SimSwapDefense(nn.Module):
@@ -29,6 +34,9 @@ class SimSwapDefense(nn.Module):
 
         self.target = create_model(TestOptions().parse())
         self.GAN_generator = Generator(input_nc=3, output_nc=3)
+
+        self.utility = Utility()
+        self.efficiency = Efficiency(None)
 
     def _load_imgs(self, imgs_path: list[str]) -> torch.tensor:
         """
@@ -82,7 +90,47 @@ class SimSwapDefense(nn.Module):
 
         self._save_imgs([source_img, target_img, swap_img])
 
-    def pgd_src_single(self, loss_weights=[1, 1]):
+    def calculate_efficiency_threshold(self) -> None:
+        dataset_path = join(self.args.data_dir, "vggface2_crop_224")
+        all_people = os.listdir(dataset_path)
+        imgs_path = []
+        for people in all_people:
+            people_path = join(dataset_path, people)
+            all_imgs_name = os.listdir(people_path)
+            selected_imgs_name = random.sample(
+                all_imgs_name, min(self.args.metric_people_image, len(all_imgs_name))
+            )
+            imgs_path.extend([join(people_path, name) for name in selected_imgs_name])
+
+        differences = []
+        min_difference, max_difference, sum_difference = 1, 0, 0
+        inf = float("inf")
+        for path in tqdm(imgs_path):
+            source_img = self._load_imgs([path])
+            source_identity = self._get_imgs_identity(source_img)
+            target_img = self._load_imgs([path])
+            swap_img = self.target(None, target_img, source_identity, None, True)
+
+            difference = self.efficiency.get_image_difference(source_img, swap_img)
+            if math.isinf(difference):
+                continue
+
+            min_difference = min(difference, min_difference)
+            max_difference = max(difference, max_difference)
+            sum_difference += difference
+
+            differences.append((path, difference))
+            tqdm.write(f"{path} difference {difference:.5f}")
+
+        with open(join(self.args.log_dir, "difference.txt"), "w") as f:
+            for line in differences:
+                f.write(f"{line}\n")
+
+        self.logger.info(
+            f"With {len(differences)} pictures, the max, mean, min differences are {max_difference:.5f}, {sum_difference/len(differences):.5f} and {min_difference:.5f}"
+        )
+
+    def pgd_source_single(self, loss_weights=[1, 1]):
         self.logger.info(f"loss_weights: {loss_weights}")
 
         self.target.cuda().eval()
@@ -172,7 +220,41 @@ class SimSwapDefense(nn.Module):
 
         return source_imgs_path, target_imgs_path
 
-    def pgd_src_multi(self, loss_weights=[1, 1]):
+    def _calculate_utility(
+        self, clean_imgs: torch.tensor, pert_imgs: torch.tensor
+    ) -> float:
+        clean_imgs_ndarray = clean_imgs.detach().cpu().numpy().transpose(0, 2, 3, 1)
+        pert_imgs_ndarray = pert_imgs.detach().cpu().numpy().transpose(0, 2, 3, 1)
+        ssim = self.utility.compare(clean_imgs_ndarray, pert_imgs_ndarray)
+
+        return ssim
+
+    def _calculate_efficiency(
+        self,
+        source_imgs: torch.tensor,
+        clean_imgs_swap: torch.tensor,
+        pert_imgs_swap: torch.tensor,
+    ) -> tuple[float, float]:
+        source_imgs_ndarray = (
+            source_imgs.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
+        )
+        clean_imgs_swap_ndarray = (
+            clean_imgs_swap.detach().cpu().numpy().transpose(0, 2, 3, 1)
+        ) * 255.0
+        pert_imgs_swap_ndarray = (
+            pert_imgs_swap.detach().cpu().numpy().transpose(0, 2, 3, 1)
+        ) * 255.0
+
+        source_clean_swap = self.efficiency.compare(
+            source_imgs_ndarray, clean_imgs_swap_ndarray
+        )
+        source_pert_swap = self.efficiency.compare(
+            source_imgs_ndarray, pert_imgs_swap_ndarray
+        )
+
+        return source_clean_swap, source_pert_swap
+
+    def pgd_source_multiple(self, loss_weights=[1, 1]):
         self.logger.info(f"loss_weights: {loss_weights}")
 
         self.target.cuda().eval()
@@ -199,7 +281,6 @@ class SimSwapDefense(nn.Module):
             epsilon = (
                 self.args.pgd_epsilon * (torch.max(src_imgs) - torch.min(src_imgs)) / 2
             )
-
             for epoch in range(self.args.pgd_epochs):
                 x_imgs.requires_grad = True
 
@@ -238,6 +319,148 @@ class SimSwapDefense(nn.Module):
             )
 
             path_index += batch_size
+
+    def pgd_target_single(self, loss_weights=[100, 1]) -> None:
+        self.logger.info(f"loss_weights: {loss_weights}")
+
+        self.target.cuda().eval()
+        l2_loss = nn.MSELoss().cuda()
+
+        source_img = self._load_imgs([join(self.args.data_dir, self.args.pgd_source)])
+        mimic_img = self._load_imgs([join(self.args.data_dir, self.args.pgd_mimic)])
+        target_img = self._load_imgs([join(self.args.data_dir, self.args.pgd_target)])
+
+        source_identity = self._get_imgs_identity(source_img)
+
+        x_img = target_img.clone().detach()
+        epsilon = (
+            self.args.pgd_epsilon * (torch.max(target_img) - torch.min(target_img)) / 2
+        )
+        for iter in range(self.args.pgd_epochs):
+            x_img.requires_grad = True
+
+            x_latent_code = self.target.netG.encoder(x_img)
+            mimic_latent_code = self.target.netG.encoder(mimic_img)
+            pert_diff_loss = l2_loss(x_img, target_img.detach())
+            latent_code_diff_loss = l2_loss(x_latent_code, mimic_latent_code.detach())
+            loss = (
+                loss_weights[0] * pert_diff_loss
+                + loss_weights[1] * latent_code_diff_loss
+            )
+
+            loss.backward(retain_graph=True)
+
+            x_img = x_img.clone().detach() + epsilon * x_img.grad.sign()
+            x_img = torch.clamp(
+                x_img,
+                min=target_img - self.args.pgd_limit,
+                max=target_img + self.args.pgd_limit,
+            )
+            self.logger.info(
+                f"[Iter {iter:4}]loss: {loss:.5f}({loss_weights[0] * pert_diff_loss.item():.5f}, {loss_weights[1] * latent_code_diff_loss.item():.5f})"
+            )
+
+        source_swap_img = self.target(None, target_img, source_identity, None, True)
+        mimic_swap_img = self.target(None, mimic_img, source_identity, None, True)
+
+        x_swap_img = self.target(None, x_img, source_identity, None, True)
+
+        self._save_imgs(
+            [
+                source_img,
+                target_img,
+                source_swap_img,
+                mimic_img,
+                mimic_swap_img,
+                x_img,
+                x_swap_img,
+            ]
+        )
+
+    def pgd_target_multiple(self, loss_weights=[100, 1]) -> None:
+        self.logger.info(f"loss_weights: {loss_weights}")
+
+        self.target.cuda().eval()
+        l2_loss = nn.MSELoss().cuda()
+
+        source_imgs_path, target_imgs_path = self._get_random_imgs_path()
+
+        path_index = 0
+        batch_size = self.args.pgd_batch_size
+        image_dir = join(self.args.log_dir, "image")
+
+        mimic_img = self._load_imgs([join(self.args.data_dir, self.args.pgd_mimic)])
+        mimic_latent_code = self.target.netG.encoder(mimic_img)
+        mimic_latent_code_expand = mimic_latent_code.detach().expand(
+            batch_size, 512, 28, 28
+        )
+        utilities, efficiencies = [], []
+        for batch_index in range(self.args.pgd_batch_count):
+            src_imgs_path = source_imgs_path[path_index : path_index + batch_size]
+            tgt_imgs_path = target_imgs_path[path_index : path_index + batch_size]
+
+            src_imgs = self._load_imgs(src_imgs_path)
+            tgt_imgs = self._load_imgs(tgt_imgs_path)
+
+            x_imgs = tgt_imgs.clone().detach()
+            epsilon = (
+                self.args.pgd_epsilon * (torch.max(tgt_imgs) - torch.min(tgt_imgs)) / 2
+            )
+            for epoch in range(self.args.pgd_epochs):
+                x_imgs.requires_grad = True
+
+                x_latent_code = self.target.netG.encoder(x_imgs)
+                pert_diff_loss = l2_loss(x_imgs, tgt_imgs.detach())
+                latent_code_diff_loss = l2_loss(
+                    x_latent_code, mimic_latent_code_expand.detach()
+                )
+                loss = (
+                    loss_weights[0] * pert_diff_loss
+                    + loss_weights[1] * latent_code_diff_loss
+                )
+
+                loss.backward(retain_graph=True)
+
+                x_imgs = x_imgs.clone().detach() + epsilon * x_imgs.grad.sign()
+                x_imgs = torch.clamp(
+                    x_imgs,
+                    min=tgt_imgs - self.args.pgd_limit,
+                    max=tgt_imgs + self.args.pgd_limit,
+                )
+
+                self.logger.info(
+                    f"[Batch {batch_index+1:3}/{self.args.pgd_batch_count:3}][Iter {epoch+1:3}/{self.args.pgd_epochs:3}]loss: {loss:.5f}({loss_weights[0] * pert_diff_loss.item():.5f}, {loss_weights[1] * latent_code_diff_loss.item():.5f})"
+                )
+
+            source_identity = self._get_imgs_identity(src_imgs)
+            source_swap_img = self.target(None, tgt_imgs, source_identity, None, True)
+
+            x_swap_img = self.target(None, x_imgs, source_identity, None, True)
+            results = torch.cat(
+                (src_imgs, tgt_imgs, source_swap_img, x_imgs, x_swap_img), dim=0
+            )
+            save_image(
+                results,
+                join(image_dir, f"{batch_index+1}_compare.png"),
+                nrow=batch_size,
+            )
+
+            utility = self._calculate_utility(tgt_imgs, x_imgs)
+            utilities.append(utility)
+
+            source_clean_swap, source_pert_swap = self._calculate_efficiency(
+                src_imgs, source_swap_img, x_swap_img
+            )
+            efficiencies.append((source_clean_swap, source_pert_swap))
+
+            self.logger.info(
+                f"[Batch {batch_index+1:3}/{self.args.pgd_batch_count:3}]utility: {utility:.3f}, efficiency: {source_clean_swap:.3f}, {source_pert_swap:.3f}"
+            )
+            path_index += batch_size
+
+        self.logger.info(
+            f"Utility: {np.mean(utilities)}, Efficiency: {sum(v[0] for v in efficiencies) / len(efficiencies):.5f},{sum(v[1] for v in efficiencies) / len(efficiencies):.5f}"
+        )
 
 
 class SimSwapDefensee(nn.Module):
@@ -343,12 +566,6 @@ class SimSwapDefensee(nn.Module):
         save_image(source_img, os.path.join(self.args.log_dir, "image", "source.png"))
         save_image(target_img, os.path.join(self.args.log_dir, "image", "target.png"))
         save_image(swap_img, os.path.join(self.args.log_dir, "image", "swap.png"))
-
-    def _get_pert_imgs(self, imgs_path: list[str]) -> tuple[torch.tensor, torch.tensor]:
-        img_id = self._get_imgs_id(imgs_path)
-        pert_imgs = self.GAN_G(img_id)
-
-        return pert_imgs
 
     def _get_shifted_imgs(self, img: torch.tensor) -> torch.tensor:
         shifted_img = torch.roll(img.clone().detach(), shifts=(-1, 1), dims=(2, 3))

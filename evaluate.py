@@ -12,20 +12,16 @@ class Utility:
         pass
 
     def compare(self, imgs1_list, imgs2_list):
-        MSE = []
         SSIM = []
-        PSNR = []
         for idx in range(min(imgs1_list.shape[0], imgs2_list.shape[0])):
             img1 = imgs1_list[idx]
             img2 = imgs2_list[idx]
-            mse = metrics.mean_squared_error(img1, img2)
-            ssim = metrics.structural_similarity(img1, img2, channel_axis=2)
-            psnr = metrics.peak_signal_noise_ratio(img1, img2, data_range=1)
-            MSE.append(mse)
+            ssim = metrics.structural_similarity(
+                img1, img2, channel_axis=2, multichannel=True, data_range=1
+            )
             SSIM.append(ssim)
-            PSNR.append(psnr)
 
-        return np.mean(MSE), np.mean(SSIM), np.mean(PSNR)
+        return np.mean(SSIM)
 
 
 class Efficiency:
@@ -43,9 +39,7 @@ class Efficiency:
 
     def compare(self, imgs1, imgs2):
         count = 0
-        img1_cropped, img2_cropped = self.detect_face(
-            imgs1, imgs2
-        )  # 0~1, bs x 3 x 160 x 160
+        img1_cropped, img2_cropped = self.detect_face(imgs1, imgs2)
 
         with torch.no_grad():
             img1_embeddings = self.FaceVerification(img1_cropped).detach().cpu()
@@ -57,7 +51,7 @@ class Efficiency:
             ]
 
             for dist in dists:
-                if dist < 0.58:
+                if dist < 0.91906:
                     count += 1
 
         return count / img1_cropped.shape[0]
@@ -66,12 +60,11 @@ class Efficiency:
         IMG1 = []
         IMG2 = []
         for idx in range(min(imgs1.shape[0], imgs2.shape[0])):
-            imgs1_o = imgs1[idx : idx + 1]
-            imgs2_o = imgs2[idx : idx + 1]
+            imgs1_o = imgs1[idx]
+            imgs2_o = imgs2[idx]
 
-            img1_cropped = self.mtcnn(imgs1_o, save_path=None)[0]
-            img2_cropped = self.mtcnn(imgs2_o, save_path=None)[0]
-
+            img1_cropped = self.mtcnn(imgs1_o)
+            img2_cropped = self.mtcnn(imgs2_o)
             if img1_cropped == None:
                 temp = torch.ones((3, 160, 160))
                 IMG1.append(temp)
@@ -87,6 +80,27 @@ class Efficiency:
         IMG1 = torch.stack(IMG1, dim=0).cuda()
         IMG2 = torch.stack(IMG2, dim=0).cuda()
         return IMG1, IMG2
+
+    def _is_ndarray_valid(self, ndarray: np.ndarray) -> bool:
+        return ndarray is not None and isinstance(ndarray, np.ndarray)
+
+    def _is_tensor_valid(self, tensor: torch.tensor) -> bool:
+        return tensor is not None and isinstance(tensor, torch.Tensor)
+
+    def get_image_difference(self, source: torch.tensor, swap: torch.tensor) -> float:
+        try:
+            source_ndarray = source.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
+            swap_ndarray = swap.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
+
+            source_cropped = self.mtcnn(source_ndarray[0])[None, :].cuda()
+            swap_cropped = self.mtcnn(swap_ndarray[0])[None, :].cuda()
+
+            source_embeddings = self.FaceVerification(source_cropped).detach().cpu()
+            swap_embeddings = self.FaceVerification(swap_cropped).detach().cpu()
+
+            return (source_embeddings - swap_embeddings).norm().item()
+        except:
+            return float("inf")
 
 
 class Evaluate:

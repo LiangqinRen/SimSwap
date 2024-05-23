@@ -16,8 +16,11 @@ def main():
     defense = simswap_defense.SimSwapDefense(args, logger)
     defense_functions = {
         "swap": defense.swap,
-        "pgd_src_single": defense.pgd_src_single,
-        "pgd_src_multi": defense.pgd_src_multi,
+        "metric": defense.calculate_efficiency_threshold,
+        "pgd_src_single": defense.pgd_source_single,
+        "pgd_src_multi": defense.pgd_source_multiple,
+        "pgd_tgt_single": defense.pgd_target_single,
+        "pgd_tgt_multi": defense.pgd_target_multiple,
     }
 
     if args.method in defense_functions:
