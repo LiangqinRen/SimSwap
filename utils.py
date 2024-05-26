@@ -91,7 +91,6 @@ def get_argparser():
     parser.add_argument("--pgd_batch_size", type=int, default=10)
 
     parser.add_argument("--gan_epochs", type=int, default=100000)
-    parser.add_argument("--gan_mimic", type=str)
     parser.add_argument("--gan_batch_size", type=int, default=16)
     parser.add_argument("--gan_generator_lr", type=float, default=5e-4)
     parser.add_argument("--gan_generator_interval", type=int, default=100)
