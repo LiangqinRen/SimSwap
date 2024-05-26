@@ -86,24 +86,15 @@ def get_argparser():
     parser.add_argument("--pgd_epsilon", type=float, default=1e-2)
     parser.add_argument("--pgd_limit", type=float, default=5e-2)
     parser.add_argument("--pgd_log_interval", type=int, default=10)
+    parser.add_argument("--pgd_metric_people", type=int, default=500)
+    parser.add_argument("--pgd_people_imgs", type=int, default=10)
     parser.add_argument("--pgd_batch_size", type=int, default=10)
-    parser.add_argument("--pgd_batch_count", type=int, default=50)
-    parser.add_argument("--pgd_person_imgs", type=int, default=10)
 
-    parser.add_argument("--gan_model", type=str)
-    parser.add_argument("--gan_decoder", type=str)
-    parser.add_argument("--gan_input", type=str)
     parser.add_argument("--gan_epochs", type=int, default=100000)
-    parser.add_argument("--gan_batch_size", type=int, default=128)
-    parser.add_argument("--gan_smooth", type=int, default=1)
-    parser.add_argument("--gan_generator_lr", type=float, default=5e-5)
+    parser.add_argument("--gan_mimic", type=str)
+    parser.add_argument("--gan_batch_size", type=int, default=16)
+    parser.add_argument("--gan_generator_lr", type=float, default=5e-4)
     parser.add_argument("--gan_generator_interval", type=int, default=100)
-    parser.add_argument(
-        "--gan_eps",
-        type=float,
-        default=1e-1,
-        help="clamp limit of the generator output",
-    )
 
     parser.add_argument("--eval_A", type=str)
     parser.add_argument("--eval_B", type=str)

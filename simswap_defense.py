@@ -32,8 +32,12 @@ class SimSwapDefense(nn.Module):
         self.samples_dir = join(args.data_dir, "samples")
         self.dataset_dir = join(args.data_dir, "vggface2_crop_224")
 
+        self.gan_rgb_limits = [0.05, 0.02, 0.08]
+        self.gan_loss_limits = [0.1]
+        self.gan_loss_weights = [1, 1, 0.1]  # pert, swap diff, identity diff
+
         self.target = create_model(TestOptions().parse())
-        self.GAN_generator = Generator(input_nc=3, output_nc=3)
+        self.GAN_G = Generator(input_nc=3, output_nc=3, epsilon=self.gan_rgb_limits)
 
         self.utility = Utility()
         self.efficiency = Efficiency(None)
@@ -190,33 +194,36 @@ class SimSwapDefense(nn.Module):
         )
 
     def _get_random_imgs_path(self) -> tuple[list[str], list[str]]:
-        dirs = os.listdir(self.dataset_dir)
-        selected_people = random.sample(
-            dirs, self.args.pgd_batch_size * self.args.pgd_epochs * 2
-        )
-        source_imgs_path, target_imgs_path = [], []
+        people = os.listdir(self.dataset_dir)
+        random.shuffle(people)
 
-        for people in selected_people[
-            : self.args.pgd_batch_size * self.args.pgd_epochs
-        ]:
-            imgs_path = os.listdir(join(self.dataset_dir, people))
-            selected_imgs_path = random.sample(
-                imgs_path, min(len(imgs_path), self.args.pgd_person_imgs)
-            )
-            source_imgs_path.extend(
-                [join(self.dataset_dir, people, path) for path in selected_imgs_path]
-            )
+        index = 0
+        people_to_select = self.args.pgd_metric_people * 2
+        selected_imgs_path = []
+        while people_to_select > 0:
+            people_to_select -= 1
+            imgs_path = os.listdir(join(self.dataset_dir, people[index]))
+            while len(imgs_path) < self.args.pgd_people_imgs:
+                index += 1
+                imgs_path = os.listdir(join(self.dataset_dir, people[index]))
 
-        for people in selected_people[
-            self.args.pgd_batch_size * self.args.pgd_epochs :
-        ]:
-            imgs_path = os.listdir(join(self.dataset_dir, people))
-            selected_imgs_path = random.sample(
-                imgs_path, min(len(imgs_path), self.args.pgd_person_imgs)
+            selected_imgs_name = random.sample(imgs_path, self.args.pgd_people_imgs)
+            selected_imgs_path.extend(
+                [
+                    join(self.dataset_dir, people[index], path)
+                    for path in selected_imgs_name
+                ]
             )
-            target_imgs_path.extend(
-                [join(self.dataset_dir, people, path) for path in selected_imgs_path]
-            )
+            index += 1
+
+        source_imgs_path = selected_imgs_path[
+            : self.args.pgd_metric_people * self.args.pgd_people_imgs
+        ]
+        target_imgs_path = selected_imgs_path[
+            self.args.pgd_metric_people * self.args.pgd_people_imgs :
+        ]
+
+        assert len(source_imgs_path) == len(target_imgs_path)
 
         return source_imgs_path, target_imgs_path
 
@@ -268,7 +275,8 @@ class SimSwapDefense(nn.Module):
         mimic_img = self._load_imgs([join(self.args.data_dir, self.args.pgd_mimic)])
         mimic_identity = self._get_imgs_identity(mimic_img)
         mimic_identity_expand = mimic_identity.detach().expand(batch_size, 512)
-        for batch_index in range(self.args.pgd_batch_count):
+        utilities, efficiencies = [], []
+        for batch_index in range(self.args.pgd_metric_people):
             src_imgs_path = source_imgs_path[path_index : path_index + batch_size]
             tgt_imgs_path = target_imgs_path[path_index : path_index + batch_size]
 
@@ -284,7 +292,11 @@ class SimSwapDefense(nn.Module):
             for epoch in range(self.args.pgd_epochs):
                 x_imgs.requires_grad = True
 
-                x_identity = self._get_imgs_identity(x_imgs)
+                x_identity = torch.empty(batch_size, 512).cuda()
+                for i in range(batch_size):
+                    identity = self._get_imgs_identity(x_imgs[i].unsqueeze(0))
+                    x_identity[i] = identity[0]
+
                 pert_diff_loss = l2_loss(x_imgs, src_imgs.detach())
                 identity_diff_loss = l2_loss(x_identity, mimic_identity_expand.detach())
 
@@ -302,7 +314,7 @@ class SimSwapDefense(nn.Module):
                 )
 
                 self.logger.info(
-                    f"[Batch {batch_index+1:3}/{self.args.pgd_batch_count:3}][Iter {epoch+1:3}/{self.args.pgd_epochs:3}]loss: {loss:.5f}({loss_weights[0] * pert_diff_loss.item():.5f}, {loss_weights[1] * identity_diff_loss.item():.5f})"
+                    f"[Batch {batch_index+1:3}/{self.args.pgd_metric_people:3}][Iter {epoch+1:3}/{self.args.pgd_epochs:3}]loss: {loss:.5f}({loss_weights[0] * pert_diff_loss.item():.5f}, {loss_weights[1] * identity_diff_loss.item():.5f})"
                 )
 
             x_identity = self._get_imgs_identity(x_imgs)
@@ -318,7 +330,23 @@ class SimSwapDefense(nn.Module):
                 nrow=batch_size,
             )
 
+            utility = self._calculate_utility(src_imgs, x_imgs)
+            utilities.append(utility)
+
+            source_clean_swap, source_pert_swap = self._calculate_efficiency(
+                src_imgs, src_swap_imgs, x_swap_img
+            )
+            efficiencies.append((source_clean_swap, source_pert_swap))
+
+            self.logger.info(
+                f"[Batch {batch_index+1:3}/{self.args.pgd_metric_people:3}]utility: {utility:.3f}, efficiency: {source_clean_swap:.3f}, {source_pert_swap:.3f}"
+            )
+
             path_index += batch_size
+
+        self.logger.info(
+            f"Utility: {np.mean(utilities)}, Efficiency: {sum(v[0] for v in efficiencies) / len(efficiencies):.5f},{sum(v[1] for v in efficiencies) / len(efficiencies):.5f}"
+        )
 
     def pgd_target_single(self, loss_weights=[100, 1]) -> None:
         self.logger.info(f"loss_weights: {loss_weights}")
@@ -391,11 +419,8 @@ class SimSwapDefense(nn.Module):
 
         mimic_img = self._load_imgs([join(self.args.data_dir, self.args.pgd_mimic)])
         mimic_latent_code = self.target.netG.encoder(mimic_img)
-        mimic_latent_code_expand = mimic_latent_code.detach().expand(
-            batch_size, 512, 28, 28
-        )
         utilities, efficiencies = [], []
-        for batch_index in range(self.args.pgd_batch_count):
+        for batch_index in range(self.args.pgd_metric_people):
             src_imgs_path = source_imgs_path[path_index : path_index + batch_size]
             tgt_imgs_path = target_imgs_path[path_index : path_index + batch_size]
 
@@ -405,6 +430,9 @@ class SimSwapDefense(nn.Module):
             x_imgs = tgt_imgs.clone().detach()
             epsilon = (
                 self.args.pgd_epsilon * (torch.max(tgt_imgs) - torch.min(tgt_imgs)) / 2
+            )
+            mimic_latent_code_expand = mimic_latent_code.detach().expand(
+                batch_size, 512, 28, 28
             )
             for epoch in range(self.args.pgd_epochs):
                 x_imgs.requires_grad = True
@@ -429,7 +457,7 @@ class SimSwapDefense(nn.Module):
                 )
 
                 self.logger.info(
-                    f"[Batch {batch_index+1:3}/{self.args.pgd_batch_count:3}][Iter {epoch+1:3}/{self.args.pgd_epochs:3}]loss: {loss:.5f}({loss_weights[0] * pert_diff_loss.item():.5f}, {loss_weights[1] * latent_code_diff_loss.item():.5f})"
+                    f"[Batch {batch_index+1:3}/{self.args.pgd_metric_people:3}][Iter {epoch+1:3}/{self.args.pgd_epochs:3}]loss: {loss:.5f}({loss_weights[0] * pert_diff_loss.item():.5f}, {loss_weights[1] * latent_code_diff_loss.item():.5f})"
                 )
 
             source_identity = self._get_imgs_identity(src_imgs)
@@ -454,13 +482,308 @@ class SimSwapDefense(nn.Module):
             efficiencies.append((source_clean_swap, source_pert_swap))
 
             self.logger.info(
-                f"[Batch {batch_index+1:3}/{self.args.pgd_batch_count:3}]utility: {utility:.3f}, efficiency: {source_clean_swap:.3f}, {source_pert_swap:.3f}"
+                f"[Batch {batch_index+1:3}/{self.args.pgd_metric_people:3}]utility: {utility:.3f}, efficiency: {source_clean_swap:.3f}, {source_pert_swap:.3f}"
             )
             path_index += batch_size
 
         self.logger.info(
             f"Utility: {np.mean(utilities)}, Efficiency: {sum(v[0] for v in efficiencies) / len(efficiencies):.5f},{sum(v[1] for v in efficiencies) / len(efficiencies):.5f}"
         )
+
+    def _get_all_imgs_path(self) -> list[str]:
+        all_people = os.listdir(self.dataset_dir)
+        all_imgs_path = []
+        for people in all_people:
+            people_dir = join(self.dataset_dir, people)
+            all_imgs_name = os.listdir(people_dir)
+            all_imgs_path.extend(
+                [join(self.dataset_dir, people, name) for name in all_imgs_name]
+            )
+
+        self.logger.info(f"Collect {len(all_imgs_path)} images for GAN training")
+        return all_imgs_path
+
+    def GAN_SRC(self):
+        self.logger.info(
+            f"rgb_limits: {self.gan_rgb_limits}, loss_limits: {self.gan_loss_limits}, loss_weights: {self.gan_loss_weights}"
+        )
+
+        self.GAN_G.load_state_dict(self.target.netG.state_dict(), strict=False)
+        optimizer_G = optim.Adam(
+            [
+                {"params": self.GAN_G.up1.parameters()},
+                {"params": self.GAN_G.up2.parameters()},
+                {"params": self.GAN_G.up3.parameters()},
+                {"params": self.GAN_G.up4.parameters()},
+                {"params": self.GAN_G.last_layer.parameters()},
+            ],
+            lr=self.args.gan_generator_lr,
+            betas=(0.5, 0.999),
+        )
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(
+            optimizer_G, self.args.gan_epochs
+        )
+
+        self.target.cuda().eval()
+        l2_loss = nn.MSELoss().cuda()
+
+        for param in self.GAN_G.first_layer.parameters():
+            param.requires_grad = False
+        for param in self.GAN_G.down1.parameters():
+            param.requires_grad = False
+        for param in self.GAN_G.down2.parameters():
+            param.requires_grad = False
+        for param in self.GAN_G.down3.parameters():
+            param.requires_grad = False
+        for param in self.GAN_G.down4.parameters():
+            param.requires_grad = False
+
+        checkpoint_dir = join(self.args.log_dir, "checkpoint")
+        os.mkdir(checkpoint_dir)
+
+        best_loss = float("inf")
+        all_imgs_path = self._get_all_imgs_path()
+
+        # mimic_img = self._load_imgs([join(self.args.data_dir, self.args.gan_mimic)])
+        # mimic_identity = self._get_imgs_identity(mimic_img)
+        mimic_identity_expand = torch.ones(self.args.gan_batch_size, 512).cuda()
+
+        for epoch in range(self.args.gan_epochs):
+            self.GAN_G.cuda().train()
+            src_imgs_path = random.sample(all_imgs_path, self.args.gan_batch_size)
+            tgt_imgs_path = random.sample(all_imgs_path, self.args.gan_batch_size)
+
+            src_imgs = self._load_imgs(src_imgs_path)
+            src_identity = self._get_imgs_identity(src_imgs)
+            tgt_imgs = self._load_imgs(tgt_imgs_path)
+
+            pert_src_imgs = self.GAN_G(src_imgs)
+            pert_src_identity = self._get_imgs_identity(pert_src_imgs)
+            pert_swap_imgs = self.target(
+                None, tgt_imgs.detach(), pert_src_identity, None, True
+            )
+
+            mimic_swap_imgs = self.target(
+                None,
+                tgt_imgs.detach(),
+                mimic_identity_expand.detach(),
+                None,
+                True,
+            )
+
+            self.GAN_G.zero_grad()
+            pert_diff_loss = l2_loss(src_imgs, pert_src_imgs)
+            swap_diff_loss = l2_loss(pert_swap_imgs, mimic_swap_imgs.detach())
+            identity_diff_loss = l2_loss(src_identity, mimic_identity_expand.detach())
+
+            G_loss = (
+                self.gan_loss_weights[0] * pert_diff_loss
+                + self.gan_loss_weights[1] * swap_diff_loss
+                + self.gan_loss_weights[2] * identity_diff_loss
+            )
+            G_loss.backward()
+            optimizer_G.step()
+            scheduler.step()
+
+            self.logger.info(
+                f"[Epoch {epoch:4}]loss: {G_loss:.5f}({self.gan_loss_weights[0] * pert_diff_loss.item():.5f}, {self.gan_loss_weights[1] * swap_diff_loss.item():.5f}, {self.gan_loss_weights[2] * identity_diff_loss.item():.5f})"
+            )
+
+            if epoch % self.args.gan_generator_interval == 0:
+                with torch.no_grad():
+                    self.GAN_G.eval()
+                    self.target.eval()
+
+                    src_imgs_path = random.sample(all_imgs_path, 7)
+                    src_imgs_path.extend(
+                        [
+                            join(self.samples_dir, "zjl.jpg"),
+                            join(self.samples_dir, "6.jpg"),
+                            join(self.samples_dir, "hzxc.jpg"),
+                        ]
+                    )
+                    tgt_imgs_path = random.sample(all_imgs_path, 7)
+                    tgt_imgs_path.extend(
+                        [
+                            join(self.samples_dir, "zrf.jpg"),
+                            join(self.samples_dir, "zrf.jpg"),
+                            join(self.samples_dir, "zrf.jpg"),
+                        ]
+                    )
+
+                    src_imgs = self._load_imgs(src_imgs_path)
+                    src_identity = self._get_imgs_identity(src_imgs)
+                    tgt_imgs = self._load_imgs(tgt_imgs_path)
+
+                    src_imgs = self._load_imgs(src_imgs_path)
+                    tgt_imgs = self._load_imgs(tgt_imgs_path)
+                    src_identity = self._get_imgs_identity(src_imgs)
+
+                    src_swap_img = self.target(None, tgt_imgs, src_identity, None, True)
+                    mimic_identity_test = torch.ones(10, 512).cuda()
+                    mimic_swap_imgs = self.target(
+                        None,
+                        tgt_imgs,
+                        mimic_identity_test,
+                        None,
+                        True,
+                    )
+                    raw_results = torch.cat(
+                        (src_imgs, tgt_imgs, src_swap_img, mimic_swap_imgs), 0
+                    )
+
+                    x_imgs = self.GAN_G(src_imgs)
+                    x_identity = self._get_imgs_identity(x_imgs)
+                    x_swap_imgs = self.target(None, tgt_imgs, x_identity, None, True)
+                    protect_results = torch.cat((x_imgs, x_swap_imgs), 0)
+
+                    save_path = join(self.args.log_dir, "image", f"gan_src_{epoch}.png")
+                    self.logger.info(f"save the result at {save_path}")
+
+                    results = torch.cat((raw_results, protect_results), dim=0)
+                    save_image(results, save_path, nrow=10)
+
+            if G_loss.data < best_loss:
+                best_loss = G_loss.data
+                log_save_path = join(self.args.log_dir, "checkpoint", "gan_src.pth")
+                torch.save(
+                    {
+                        "epoch": epoch,
+                        "GAN_G_state_dict": self.GAN_G.state_dict(),
+                        "GAN_G_loss": G_loss,
+                    },
+                    log_save_path,
+                )
+
+    def GAN_TGT(self):
+        self.logger.info(
+            f"rgb_limits: {self.gan_rgb_limits}, loss_limits: {self.gan_loss_limits}, loss_weights: {self.gan_loss_weights}"
+        )
+
+        self.GAN_G.load_state_dict(self.target.netG.state_dict(), strict=False)
+        optimizer_G = optim.Adam(
+            [
+                {"params": self.GAN_G.up1.parameters()},
+                {"params": self.GAN_G.up2.parameters()},
+                {"params": self.GAN_G.up3.parameters()},
+                {"params": self.GAN_G.up4.parameters()},
+                {"params": self.GAN_G.last_layer.parameters()},
+            ],
+            lr=self.args.gan_generator_lr,
+            betas=(0.5, 0.999),
+        )
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(
+            optimizer_G, self.args.gan_epochs
+        )
+
+        self.target.cuda().eval()
+        l2_loss = nn.MSELoss().cuda()
+
+        for param in self.GAN_G.first_layer.parameters():
+            param.requires_grad = False
+        for param in self.GAN_G.down1.parameters():
+            param.requires_grad = False
+        for param in self.GAN_G.down2.parameters():
+            param.requires_grad = False
+        for param in self.GAN_G.down3.parameters():
+            param.requires_grad = False
+        for param in self.GAN_G.down4.parameters():
+            param.requires_grad = False
+
+        checkpoint_dir = join(self.args.log_dir, "checkpoint")
+        os.mkdir(checkpoint_dir)
+
+        best_loss = float("inf")
+        all_imgs_path = self._get_all_imgs_path()
+
+        mimic_img = self._load_imgs([join(self.args.data_dir, self.args.gan_mimic)])
+        mimic_identity = self._get_imgs_identity(mimic_img)
+        mimic_identity_expand = mimic_identity.detach().expand(
+            self.args.gan_batch_size, 512
+        )
+
+        for epoch in range(self.args.gan_epochs):
+            self.GAN_G.cuda().train()
+            src_imgs_path = random.sample(all_imgs_path, self.args.gan_batch_size)
+            tgt_imgs_path = random.sample(all_imgs_path, self.args.gan_batch_size)
+
+            src_imgs = self._load_imgs(src_imgs_path)
+            src_identity = self._get_imgs_identity(src_imgs)
+            tgt_imgs = self._load_imgs(tgt_imgs_path)
+            swap_imgs = self.target(None, tgt_imgs.detach(), src_identity, None, True)
+
+            pert_src_imgs = self.GAN_G(src_imgs)
+            pert_src_identity = self._get_imgs_identity(pert_src_imgs)
+            pert_swap_imgs = self.target(
+                None, tgt_imgs.detach(), pert_src_identity, None, True
+            )
+
+            mimic_swap_imgs = self.target(
+                None, tgt_imgs.detach(), mimic_identity, None, True
+            )
+
+            self.GAN_G.zero_grad()
+            pert_diff_loss = l2_loss(src_imgs, pert_src_imgs)
+            swap_diff_loss = l2_loss(pert_swap_imgs, mimic_swap_imgs.detach())
+            identity_diff_loss = l2_loss(src_identity, mimic_identity_expand.detach())
+
+            G_loss = (
+                self.gan_loss_weights[0] * pert_diff_loss
+                + self.gan_loss_weights[1] * swap_diff_loss
+                + self.gan_loss_weights[2] * identity_diff_loss
+            )
+            G_loss.backward()
+            optimizer_G.step()
+            scheduler.step()
+
+            self.logger.info(
+                f"[Epoch {epoch:4}]loss: {G_loss:.5f}({self.gan_loss_weights[0] * pert_diff_loss.item():.5f}, {self.gan_loss_weights[1] * swap_diff_loss.item():.5f}, {self.gan_loss_weights[2] * identity_diff_loss.item():.5f})"
+            )
+
+            if epoch % self.args.gan_generator_interval == 0:
+                with torch.no_grad():
+                    self.GAN_G.eval()
+                    self.target.eval()
+
+                    src_imgs_path = [join(self.samples_dir, "zjl.jpg")]
+                    tgt_imgs_path = [join(self.samples_dir, "zrf.jpg")]
+
+                    src_imgs = self._load_imgs(src_imgs_path)
+                    tgt_imgs = self._load_imgs(tgt_imgs_path)
+                    src_identity = self._get_imgs_identity(src_imgs)
+
+                    src_swap_img = self.target(None, tgt_imgs, src_identity, None, True)
+                    raw_results = torch.cat(
+                        (
+                            src_imgs,
+                            tgt_imgs,
+                            src_swap_img,
+                        ),
+                        0,
+                    )
+
+                    x_imgs = self.GAN_G(src_imgs)
+                    x_identity = self._get_imgs_identity(x_imgs)
+                    x_swap_img = self.target(None, tgt_imgs, x_identity, None, True)
+                    protect_results = torch.cat((x_imgs, x_swap_img), 0)
+
+                    save_path = join(self.args.log_dir, "image", f"gan_src_{epoch}.png")
+                    self.logger.info(f"save the result at {save_path}")
+
+                    results = torch.cat((raw_results, protect_results), dim=0)
+                    save_image(results, save_path, nrow=3)
+
+            if G_loss.data < best_loss:
+                best_loss = G_loss.data
+                log_save_path = join(self.args.log_dir, "checkpoint", "gan_src.pth")
+                torch.save(
+                    {
+                        "epoch": epoch,
+                        "GAN_G_state_dict": self.GAN_G.state_dict(),
+                        "GAN_G_loss": G_loss,
+                    },
+                    log_save_path,
+                )
 
 
 class SimSwapDefensee(nn.Module):
@@ -751,6 +1074,12 @@ class SimSwapDefensee(nn.Module):
 
         results = torch.cat((raw_results, protect_results), dim=0)
         save_image(results, save_path, nrow=5)
+
+    def _get_shifted_imgs(self, img: torch.tensor) -> torch.tensor:
+        shifted_img = torch.roll(img.clone().detach(), shifts=(-1, 1), dims=(2, 3))
+        rotated_img = torchvision.transforms.functional.rotate(shifted_img, 330)
+
+        return rotated_img
 
     def GAN_SRC(
         self,

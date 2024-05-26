@@ -85,7 +85,7 @@ class ResnetBlock_Adain(nn.Module):
 
 
 class Generator(nn.Module):
-    def __init__(self, input_nc, output_nc, deep=False):
+    def __init__(self, input_nc, output_nc, deep=False, epsilon=None):
         super(Generator, self).__init__()
         activate_layer = nn.ReLU(True)
         norm_layer = nn.BatchNorm2d
@@ -149,6 +149,8 @@ class Generator(nn.Module):
             nn.Tanh(),
         )
 
+        self.epsilon = epsilon
+
     def forward(self, input: torch.tensor) -> tuple[torch.tensor, torch.tensor]:
         x = input  # 3 * 224 * 224
 
@@ -167,7 +169,17 @@ class Generator(nn.Module):
         x = self.last_layer(x)
         x = (x + 1) / 2
 
-        return x  # modified face
+        clamped_out = []
+        for i in range(len(self.epsilon)):
+            clamped_channel = torch.clamp(
+                x[:, i, :, :],
+                min=input[:, i, :, :] - self.epsilon[i],
+                max=input[:, i, :, :] + self.epsilon[i],
+            )
+            clamped_out.append(clamped_channel)
+
+        out = torch.stack(clamped_out, dim=1)
+        return out  # modified face
 
     def decoder(self, input):
         x = input
