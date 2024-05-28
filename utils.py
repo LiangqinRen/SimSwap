@@ -90,10 +90,11 @@ def get_argparser():
     parser.add_argument("--pgd_people_imgs", type=int, default=10)
     parser.add_argument("--pgd_batch_size", type=int, default=10)
 
-    parser.add_argument("--gan_epochs", type=int, default=100000)
+    parser.add_argument("--gan_epochs", type=int, default=10000)
     parser.add_argument("--gan_batch_size", type=int, default=16)
     parser.add_argument("--gan_generator_lr", type=float, default=5e-4)
     parser.add_argument("--gan_generator_interval", type=int, default=100)
+    parser.add_argument("--gan_test_times", type=int, default=500)
 
     parser.add_argument("--eval_A", type=str)
     parser.add_argument("--eval_B", type=str)
@@ -150,3 +151,9 @@ def visualize_figures(
     figure = np.clip(figure * 255, 0, 255).astype("uint8")
 
     cv2.imwrite(path, figure, [int(cv2.IMWRITE_PNG_COMPRESSION), 0])
+
+
+def calculate_score(
+    utility: float, efficiency_clean: float, efficiency_pert: float
+) -> float:
+    return pow(utility, 5) + np.tanh(3 * (efficiency_clean - efficiency_pert))

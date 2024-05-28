@@ -23,6 +23,8 @@ def main():
         "pgd_tgt_multi": defense.pgd_target_multiple,
         "gan_src": defense.GAN_SRC,
         "gan_tgt": defense.GAN_TGT,
+        "gan_src_test": defense.GAN_SRC_test,
+        "gan_tgt_test": defense.GAN_TGT_test,
     }
 
     if args.method in defense_functions:

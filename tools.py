@@ -1,5 +1,6 @@
 import ast
 import os
+import numpy as np
 
 
 def analyze_efficiency_difference():
@@ -14,8 +15,16 @@ def analyze_efficiency_difference():
         print(f"{i:3}: {sort_diffs[int(len(sort_diffs)/100*i)]:.5f}")
 
 
+def calculate_score(
+    utility: float, efficiency_clean: float, efficiency_pert: float
+) -> float:
+    print(
+        f"score: {utility:.3f},{efficiency_clean:.3f},{efficiency_pert:.3f} -> {pow(utility, 5) + np.tanh(3*(efficiency_clean - efficiency_pert)):.3f}"
+    )
+
+
 def main():
-    analyze_efficiency_difference()
+    calculate_score(0.935, 0.741, 0.736)
 
 
 if __name__ == "__main__":

@@ -36,10 +36,10 @@ class SimSwapDefense(nn.Module):
         self.gan_loss_limits = [0.05, 3.0]
         self.gan_src_loss_weights = [1, 1, 0.1]  # pert, swap diff, identity diff
         self.gan_tgt_loss_weights = [
-            1,
-            9,
+            50,
+            10,
             0.02,
-            0.02,
+            0.005,
         ]  # pert, swap diff, latent diff, rotate latent diff
 
         self.target = create_model(TestOptions().parse())
@@ -76,6 +76,26 @@ class SimSwapDefense(nn.Module):
             save_image(source, join(log_dir, "image", "source.png"))
             save_image(target, join(log_dir, "image", "target.png"))
             save_image(swap, join(log_dir, "image", "swap.png"))
+        elif len(imgs) == 5:  # GAN test
+            source, target, swap, pert, pert_swap = imgs[:]
+            results = torch.cat((source, target, swap, pert, pert_swap), dim=0)
+            save_image(results, join(log_dir, "image", "compare.png"), nrow=3)
+
+            for i, img in enumerate(source, 1):
+                save_path = join(log_dir, "image", f"source_{i}.png")
+                save_image(img, save_path)
+            for i, img in enumerate(target, 1):
+                save_path = join(log_dir, "image", f"target_{i}.png")
+                save_image(img, save_path)
+            for i, img in enumerate(swap, 1):
+                save_path = join(log_dir, "image", f"swap_{i}.png")
+                save_image(img, save_path)
+            for i, img in enumerate(pert, 1):
+                save_path = join(log_dir, "image", f"pert_{i}.png")
+                save_image(img, save_path)
+            for i, img in enumerate(pert_swap, 1):
+                save_path = join(log_dir, "image", f"pert_swap_{i}.png")
+                save_image(img, save_path)
         elif len(imgs) == 7:
             source, target, swap, mimic, mimic_swap, pert, pert_swap = imgs[:]
             results = torch.cat((source, target, swap, mimic, pert, pert_swap), dim=0)
@@ -805,6 +825,171 @@ class SimSwapDefense(nn.Module):
                     },
                     log_save_path,
                 )
+
+    def _get_split_all_imgs_path(self) -> tuple[list[str], list[str]]:
+        all_people = os.listdir(self.dataset_dir)
+        random.shuffle(all_people)
+
+        source_people = all_people[: int(len(all_people) / 2)]
+        target_people = all_people[int(len(all_people) / 2) :]
+
+        source_imgs_path = []
+        for people in source_people:
+            people_dir = join(self.dataset_dir, people)
+            people_imgs_name = os.listdir(people_dir)
+            source_imgs_path.extend(
+                [join(self.dataset_dir, people, name) for name in people_imgs_name]
+            )
+
+        target_imgs_path = []
+        for people in target_people:
+            people_dir = join(self.dataset_dir, people)
+            people_imgs_name = os.listdir(people_dir)
+            target_imgs_path.extend(
+                [join(self.dataset_dir, people, name) for name in people_imgs_name]
+            )
+
+        return source_imgs_path, target_imgs_path
+
+    def GAN_SRC_test(self):
+        from utils import calculate_score
+
+        model_path = join("checkpoints", "gan_src.pth")
+        self.GAN_G.load_state_dict(torch.load(model_path)["GAN_G_state_dict"])
+
+        self.target.cuda().eval()
+        self.GAN_G.cuda().eval()
+
+        source_path = [
+            join(self.samples_dir, "zjl.jpg"),
+            join(self.samples_dir, "6.jpg"),
+            join(self.samples_dir, "jl.jpg"),
+        ]
+        target_path = [
+            join(self.samples_dir, "zrf.jpg"),
+            join(self.samples_dir, "zrf.jpg"),
+            join(self.samples_dir, "zrf.jpg"),
+        ]
+
+        source_imgs = self._load_imgs(source_path)
+        target_imgs = self._load_imgs(target_path)
+        source_identity = self._get_imgs_identity(source_imgs)
+        swap_imgs = self.target(None, target_imgs, source_identity, None, True)
+
+        pert_source_imgs = self.GAN_G(source_imgs)
+        pert_source_identity = self._get_imgs_identity(pert_source_imgs)
+        pert_swap_imgs = self.target(
+            None, target_imgs, pert_source_identity, None, True
+        )
+
+        self._save_imgs(
+            [source_imgs, target_imgs, swap_imgs, pert_source_imgs, pert_swap_imgs]
+        )
+
+        source_imgs_path, target_imgs_path = self._get_split_all_imgs_path()
+        utilities, clean_efficiencies, pert_efficiencies = [], [], []
+        scores = []
+        for i in range(self.args.gan_test_times):
+            iter_source_path = random.sample(source_imgs_path, self.args.gan_batch_size)
+            iter_target_path = random.sample(target_imgs_path, self.args.gan_batch_size)
+
+            source_imgs = self._load_imgs(iter_source_path)
+            target_imgs = self._load_imgs(iter_target_path)
+            source_identity = self._get_img_identity(source_imgs)
+            swap_imgs = self.target(None, target_imgs, source_identity, None, True)
+
+            pert_source_imgs = self.GAN_G(source_imgs)
+            pert_source_identity = self._get_img_identity(pert_source_imgs)
+            pert_swap_imgs = self.target(
+                None, target_imgs, pert_source_identity, None, True
+            )
+
+            utility = self._calculate_utility(source_imgs, pert_source_imgs)
+            utilities.append(utility)
+            source_clean_swap, source_pert_swap = self._calculate_efficiency(
+                source_imgs, swap_imgs, pert_swap_imgs
+            )
+            clean_efficiencies.append(source_clean_swap)
+            pert_efficiencies.append(source_pert_swap)
+            score = calculate_score(utility, source_clean_swap, source_pert_swap)
+            scores.append(score)
+
+            self.logger.info(
+                f"Iter {i:3}, utility: {utility:.3f}, efficiency: {source_clean_swap:.3f}, {source_pert_swap:.3f}, score: {score:.3f}"
+            )
+
+        self.logger.info(
+            f"Average of {self.args.gan_batch_size * self.args.gan_test_times} pictures: utility: {sum(utilities)/len(utilities):.3f}, efficiency: {sum(clean_efficiencies)/len(clean_efficiencies):.3f}, {sum(pert_efficiencies)/len(pert_efficiencies):.3f}, score: {sum(scores)/len(scores):.3f}"
+        )
+
+    def GAN_TGT_test(self):
+        from utils import calculate_score
+
+        model_path = join("checkpoints", "gan_tgt.pth")
+        self.GAN_G.load_state_dict(torch.load(model_path)["GAN_G_state_dict"])
+
+        self.target.cuda().eval()
+        self.GAN_G.cuda().eval()
+
+        source_path = [
+            join(self.samples_dir, "zrf.jpg"),
+            join(self.samples_dir, "zrf.jpg"),
+            join(self.samples_dir, "zrf.jpg"),
+        ]
+        target_path = [
+            join(self.samples_dir, "zjl.jpg"),
+            join(self.samples_dir, "6.jpg"),
+            join(self.samples_dir, "jl.jpg"),
+        ]
+
+        source_imgs = self._load_imgs(source_path)
+        target_imgs = self._load_imgs(target_path)
+        source_identity = self._get_imgs_identity(source_imgs)
+        swap_imgs = self.target(None, target_imgs, source_identity, None, True)
+
+        pert_target_imgs = self.GAN_G(target_imgs)
+        pert_swap_imgs = self.target(
+            None, pert_target_imgs, source_identity, None, True
+        )
+
+        self._save_imgs(
+            [source_imgs, target_imgs, swap_imgs, pert_target_imgs, pert_swap_imgs]
+        )
+
+        source_imgs_path, target_imgs_path = self._get_split_all_imgs_path()
+        utilities, clean_efficiencies, pert_efficiencies = [], [], []
+        scores = []
+        for i in range(self.args.gan_test_times):
+            iter_source_path = random.sample(source_imgs_path, self.args.gan_batch_size)
+            iter_target_path = random.sample(target_imgs_path, self.args.gan_batch_size)
+
+            source_imgs = self._load_imgs(iter_source_path)
+            target_imgs = self._load_imgs(iter_target_path)
+            source_identity = self._get_imgs_identity(source_imgs)
+            swap_imgs = self.target(None, target_imgs, source_identity, None, True)
+
+            pert_target_imgs = self.GAN_G(target_imgs)
+            pert_swap_imgs = self.target(
+                None, pert_target_imgs, source_identity, None, True
+            )
+
+            utility = self._calculate_utility(target_imgs, pert_target_imgs)
+            utilities.append(utility)
+            source_clean_swap, source_pert_swap = self._calculate_efficiency(
+                source_imgs, swap_imgs, pert_swap_imgs
+            )
+            clean_efficiencies.append(source_clean_swap)
+            pert_efficiencies.append(source_pert_swap)
+            score = calculate_score(utility, source_clean_swap, source_pert_swap)
+            scores.append(score)
+
+            self.logger.info(
+                f"Iter {i:3}, utility: {utility:.3f}, efficiency: {source_clean_swap:.3f}, {source_pert_swap:.3f}, score: {score:.3f}"
+            )
+
+        self.logger.info(
+            f"Average of {self.args.gan_batch_size * self.args.gan_test_times} pictures: utility: {sum(utilities)/len(utilities):.3f}, efficiency: {sum(clean_efficiencies)/len(clean_efficiencies):.3f}, {sum(pert_efficiencies)/len(pert_efficiencies):.3f}, score: {sum(scores)/len(scores):.3f}"
+        )
 
 
 class SimSwapDefensee(nn.Module):
