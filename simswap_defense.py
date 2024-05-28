@@ -33,13 +33,13 @@ class SimSwapDefense(nn.Module):
         self.dataset_dir = join(args.data_dir, "vggface2_crop_224")
 
         self.gan_rgb_limits = [0.075, 0.03, 0.075]
-        self.gan_loss_limits = [0.05, 3.0]
+        self.gan_loss_limits = [0.05, 5.0]
         self.gan_src_loss_weights = [1, 1, 0.1]  # pert, swap diff, identity diff
         self.gan_tgt_loss_weights = [
-            50,
+            30,
             10,
-            0.02,
-            0.005,
+            0.1,
+            0.025,
         ]  # pert, swap diff, latent diff, rotate latent diff
 
         self.target = create_model(TestOptions().parse())
