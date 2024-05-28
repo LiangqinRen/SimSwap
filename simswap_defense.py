@@ -33,7 +33,8 @@ class SimSwapDefense(nn.Module):
         self.dataset_dir = join(args.data_dir, "vggface2_crop_224")
 
         self.gan_rgb_limits = [0.075, 0.03, 0.075]
-        self.gan_loss_limits = [0.05, 3.0]
+        self.gan_src_loss_limits = [0.01, 0.01]
+        self.gan_tgt_loss_limits = [0.05, 3.0]
         self.gan_src_loss_weights = [3, 10, 0.1]  # pert, swap diff, identity diff
         self.gan_tgt_loss_weights = [
             30,
@@ -531,7 +532,7 @@ class SimSwapDefense(nn.Module):
 
     def GAN_SRC(self):
         self.logger.info(
-            f"rgb_limits: {self.gan_rgb_limits}, loss_limits: {self.gan_loss_limits}, loss_weights: {self.gan_src_loss_weights}"
+            f"rgb_limits: {self.gan_rgb_limits}, loss_limits: {self.gan_src_loss_limits}, loss_weights: {self.gan_src_loss_weights}"
         )
 
         self.GAN_G.load_state_dict(self.target.netG.state_dict(), strict=False)
@@ -592,12 +593,12 @@ class SimSwapDefense(nn.Module):
             swap_diff_loss = -torch.clamp(
                 l2_loss(flatten(pert_swap_imgs), flatten(tgt_swap_imgs)),
                 0.0,
-                self.gan_loss_limits[0],
+                self.gan_src_loss_limits[0],
             )
             identity_diff_loss = -torch.clamp(
                 l2_loss(flatten(pert_src_identity), flatten(src_identity)),
                 0.0,
-                self.gan_loss_limits[1],
+                self.gan_src_loss_limits[1],
             )
 
             G_loss = (
@@ -685,7 +686,7 @@ class SimSwapDefense(nn.Module):
 
     def GAN_TGT(self):
         self.logger.info(
-            f"rgb_limits: {self.gan_rgb_limits}, loss_limits: {self.gan_loss_limits}, loss_weights: {self.gan_tgt_loss_weights}"
+            f"rgb_limits: {self.gan_rgb_limits}, loss_limits: {self.gan_tgt_loss_limits}, loss_weights: {self.gan_tgt_loss_weights}"
         )
 
         self.GAN_G.load_state_dict(self.target.netG.state_dict(), strict=False)
@@ -748,12 +749,12 @@ class SimSwapDefense(nn.Module):
             swap_diff_loss = -torch.clamp(
                 l2_loss(flatten(pert_swap_imgs), flatten(tgt_swap_imgs)),
                 0.0,
-                self.gan_loss_limits[0],
+                self.gan_tgt_loss_limits[0],
             )
             latent_diff_loss = -torch.clamp(
                 l2_loss(flatten(pert_latent_code), flatten(tgt_latent_code)),
                 0.0,
-                self.gan_loss_limits[1],
+                self.gan_tgt_loss_limits[1],
             )
             rotate_latent_diff_loss = l2_loss(
                 flatten(pert_latent_code), flatten(rotate_latent_code)
