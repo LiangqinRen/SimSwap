@@ -33,8 +33,8 @@ class SimSwapDefense(nn.Module):
         self.dataset_dir = join(args.data_dir, "vggface2_crop_224")
 
         self.gan_rgb_limits = [0.075, 0.03, 0.075]
-        self.gan_loss_limits = [0.05, 5.0]
-        self.gan_src_loss_weights = [1, 1, 0.1]  # pert, swap diff, identity diff
+        self.gan_loss_limits = [0.05, 3.0]
+        self.gan_src_loss_weights = [3, 10, 0.1]  # pert, swap diff, identity diff
         self.gan_tgt_loss_weights = [
             30,
             10,
@@ -531,7 +531,7 @@ class SimSwapDefense(nn.Module):
 
     def GAN_SRC(self):
         self.logger.info(
-            f"rgb_limits: {self.gan_rgb_limits}, loss_weights: {self.gan_src_loss_weights}"
+            f"rgb_limits: {self.gan_rgb_limits}, loss_limits: {self.gan_loss_limits}, loss_weights: {self.gan_src_loss_weights}"
         )
 
         self.GAN_G.load_state_dict(self.target.netG.state_dict(), strict=False)
@@ -552,6 +552,7 @@ class SimSwapDefense(nn.Module):
 
         self.target.cuda().eval()
         l2_loss = nn.MSELoss().cuda()
+        flatten = nn.Flatten().cuda()
 
         for param in self.GAN_G.first_layer.parameters():
             param.requires_grad = False
@@ -569,9 +570,6 @@ class SimSwapDefense(nn.Module):
 
         best_loss = float("inf")
         all_imgs_path = self._get_all_imgs_path()
-
-        mimic_identity_expand = torch.ones(self.args.gan_batch_size, 512).cuda()
-
         for epoch in range(self.args.gan_epochs):
             self.GAN_G.cuda().train()
             src_imgs_path = random.sample(all_imgs_path, self.args.gan_batch_size)
@@ -581,24 +579,26 @@ class SimSwapDefense(nn.Module):
             src_identity = self._get_imgs_identity(src_imgs)
             tgt_imgs = self._load_imgs(tgt_imgs_path)
 
+            src_identity = self._get_imgs_identity(src_imgs)
+            tgt_swap_imgs = self.target(None, tgt_imgs, src_identity, None, True)
+
             pert_src_imgs = self.GAN_G(src_imgs)
             pert_src_identity = self._get_imgs_identity(pert_src_imgs)
-            pert_swap_imgs = self.target(
-                None, tgt_imgs.detach(), pert_src_identity, None, True
-            )
-
-            mimic_swap_imgs = self.target(
-                None,
-                tgt_imgs.detach(),
-                mimic_identity_expand.detach(),
-                None,
-                True,
-            )
+            pert_swap_imgs = self.target(None, tgt_imgs, pert_src_identity, None, True)
 
             self.GAN_G.zero_grad()
-            pert_diff_loss = l2_loss(src_imgs, pert_src_imgs)
-            swap_diff_loss = l2_loss(pert_swap_imgs, mimic_swap_imgs.detach())
-            identity_diff_loss = l2_loss(src_identity, mimic_identity_expand.detach())
+
+            pert_diff_loss = l2_loss(flatten(pert_src_imgs), flatten(src_imgs))
+            swap_diff_loss = -torch.clamp(
+                l2_loss(flatten(pert_swap_imgs), flatten(tgt_swap_imgs)),
+                0.0,
+                self.gan_loss_limits[0],
+            )
+            identity_diff_loss = -torch.clamp(
+                l2_loss(flatten(pert_src_identity), flatten(src_identity)),
+                0.0,
+                self.gan_loss_limits[1],
+            )
 
             G_loss = (
                 self.gan_src_loss_weights[0] * pert_diff_loss
@@ -610,7 +610,7 @@ class SimSwapDefense(nn.Module):
             scheduler.step()
 
             self.logger.info(
-                f"[Epoch {epoch:6}]loss: {G_loss:.5f}({self.gan_src_loss_weights[0] * pert_diff_loss.item():.5f}, {self.gan_src_loss_weights[1] * swap_diff_loss.item():.5f}, {self.gan_src_loss_weights[2] * identity_diff_loss.item():.5f})"
+                f"[Epoch {epoch:6}]loss: {G_loss:8.5f}({self.gan_src_loss_weights[0] * pert_diff_loss.item():.5f}, {self.gan_src_loss_weights[1] * swap_diff_loss.item():.5f}, {self.gan_src_loss_weights[2] * identity_diff_loss.item():.5f})({swap_diff_loss.item():.5f}, {identity_diff_loss.item():.5f})"
             )
 
             if epoch % self.args.gan_generator_interval == 0:
@@ -623,7 +623,7 @@ class SimSwapDefense(nn.Module):
                         [
                             join(self.samples_dir, "zjl.jpg"),
                             join(self.samples_dir, "6.jpg"),
-                            join(self.samples_dir, "hzxc.jpg"),
+                            join(self.samples_dir, "jl.jpg"),
                         ]
                     )
                     tgt_imgs_path = random.sample(all_imgs_path, 7)
@@ -652,9 +652,7 @@ class SimSwapDefense(nn.Module):
                         None,
                         True,
                     )
-                    raw_results = torch.cat(
-                        (src_imgs, tgt_imgs, src_swap_img, mimic_swap_imgs), 0
-                    )
+                    raw_results = torch.cat((src_imgs, tgt_imgs, src_swap_img), 0)
 
                     x_imgs = self.GAN_G(src_imgs)
                     x_identity = self._get_imgs_identity(x_imgs)
@@ -687,7 +685,7 @@ class SimSwapDefense(nn.Module):
 
     def GAN_TGT(self):
         self.logger.info(
-            f"rgb_limits: {self.gan_rgb_limits}, loss_limits: {self.gan_loss_limits}, loss_weights: {self.gan_src_loss_weights}"
+            f"rgb_limits: {self.gan_rgb_limits}, loss_limits: {self.gan_loss_limits}, loss_weights: {self.gan_tgt_loss_weights}"
         )
 
         self.GAN_G.load_state_dict(self.target.netG.state_dict(), strict=False)
