@@ -95,6 +95,7 @@ def get_argparser():
     parser.add_argument("--gan_generator_lr", type=float, default=5e-4)
     parser.add_argument("--gan_generator_interval", type=int, default=100)
     parser.add_argument("--gan_test_times", type=int, default=500)
+    parser.add_argument("--gan_test_models", type=str)
 
     parser.add_argument("--eval_A", type=str)
     parser.add_argument("--eval_B", type=str)

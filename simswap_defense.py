@@ -853,7 +853,7 @@ class SimSwapDefense(nn.Module):
     def GAN_SRC_test(self):
         from utils import calculate_score
 
-        model_path = join("checkpoints", "gan_src.pth")
+        model_path = join("checkpoints", self.args.gan_test_models)
         self.GAN_G.load_state_dict(torch.load(model_path)["GAN_G_state_dict"])
 
         self.target.cuda().eval()
@@ -924,7 +924,7 @@ class SimSwapDefense(nn.Module):
     def GAN_TGT_test(self):
         from utils import calculate_score
 
-        model_path = join("checkpoints", "gan_tgt.pth")
+        model_path = join("checkpoints", self.args.gan_test_models)
         self.GAN_G.load_state_dict(torch.load(model_path)["GAN_G_state_dict"])
 
         self.target.cuda().eval()
