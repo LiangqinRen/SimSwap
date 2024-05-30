@@ -2,6 +2,7 @@ import os
 import random
 import time
 import math
+import cv2
 
 import torch
 import torchvision
@@ -109,6 +110,69 @@ class SimSwapDefense(nn.Module):
             save_image(mimic_swap, join(log_dir, "image", "mimic_swap.png"))
             save_image(pert, join(log_dir, "image", "pert.png"))
             save_image(pert_swap, join(log_dir, "image", "pert_swap.png"))
+        elif len(imgs) == 13:
+            (
+                source,
+                target,
+                swap,
+                pert,
+                pert_swap,
+                noise_pert,
+                noise_pert_swap,
+                blur_pert,
+                blur_pert_swap,
+                compress_pert,
+                compress_pert_swap,
+                rotate_pert,
+                rotate_pert_swap,
+            ) = imgs[:]
+
+            results = torch.cat(
+                (
+                    source,
+                    target,
+                    swap,
+                    pert,
+                    pert_swap,
+                    noise_pert,
+                    noise_pert_swap,
+                    blur_pert,
+                    blur_pert_swap,
+                    compress_pert,
+                    compress_pert_swap,
+                    rotate_pert,
+                    rotate_pert_swap,
+                ),
+                dim=0,
+            )
+            save_image(results, join(log_dir, "image", "compare.png"), nrow=3)
+
+            for i, img in enumerate(source, 1):
+                save_image(img, join(log_dir, "image", f"source_{i}.png"))
+            for i, img in enumerate(target, 1):
+                save_image(img, join(log_dir, "image", f"target_{i}.png"))
+            for i, img in enumerate(swap, 1):
+                save_image(img, join(log_dir, "image", f"swap_{i}.png"))
+            for i, img in enumerate(pert, 1):
+                save_image(img, join(log_dir, "image", f"pert_{i}.png"))
+            for i, img in enumerate(pert_swap, 1):
+                save_image(img, join(log_dir, "image", f"pert_swap_{i}.png"))
+            for i, img in enumerate(noise_pert, 1):
+                save_image(img, join(log_dir, "image", f"noise_pert_{i}.png"))
+            for i, img in enumerate(noise_pert_swap, 1):
+                save_image(img, join(log_dir, "image", f"noise_pert_swap_{i}.png"))
+            for i, img in enumerate(blur_pert, 1):
+                save_image(img, join(log_dir, "image", f"blur_pert_{i}.png"))
+            for i, img in enumerate(blur_pert_swap, 1):
+                save_image(img, join(log_dir, "image", f"blur_pert_swap_{i}.png"))
+            for i, img in enumerate(compress_pert, 1):
+                save_image(img, join(log_dir, "image", f"compress_pert_{i}.png"))
+            for i, img in enumerate(compress_pert_swap, 1):
+                save_image(img, join(log_dir, "image", f"compress_pert_swap_{i}.png"))
+            for i, img in enumerate(rotate_pert, 1):
+                save_image(img, join(log_dir, "image", f"rotate_pert_{i}.png"))
+            for i, img in enumerate(rotate_pert_swap, 1):
+                save_image(img, join(log_dir, "image", f"rotate_pert_swap_{i}.png"))
 
     def swap(self):
         self.target.eval()
@@ -988,4 +1052,194 @@ class SimSwapDefense(nn.Module):
 
         self.logger.info(
             f"Average of {self.args.gan_batch_size * self.args.gan_test_times} pictures: utility: {sum(utilities)/len(utilities):.3f}, efficiency: {sum(clean_efficiencies)/len(clean_efficiencies):.3f}, {sum(pert_efficiencies)/len(pert_efficiencies):.3f}, score: {sum(scores)/len(scores):.3f}"
+        )
+
+    def _gauss_noise(
+        self, pert: torch.tensor, gauss_mean: float, gauss_std: float
+    ) -> torch.tensor:
+        gauss_noise = gauss_mean + gauss_std * torch.randn(pert.shape).cuda()
+        noise_pert = pert + gauss_noise
+
+        return noise_pert
+
+    def _gauss_kernel(self, size: int, sigma: float):
+        coords = torch.arange(size, dtype=torch.float32) - (size - 1) / 2.0
+        grid = coords.repeat(size).view(size, size)
+        kernel = torch.exp(-0.5 * (grid**2 + grid.t() ** 2) / sigma**2)
+        kernel = kernel / kernel.sum()
+
+        return kernel
+
+    def _gauss_blur(self, pert: torch.tensor, size: int, sigma: float) -> torch.tensor:
+        kernel = self._gauss_kernel(size, sigma).cuda()
+        kernel = kernel.view(1, 1, size, size)
+        kernel = kernel.repeat(pert.shape[1], 1, 1, 1)
+        blurred_pert = F.conv2d(pert, kernel, padding=size // 2, groups=pert.shape[1])
+
+        return blurred_pert.squeeze(0)
+
+    def _jpeg_compress(self, pert: torch.tensor, ratio: int) -> torch.tensor:
+        pert_np = pert.detach().cpu().numpy().transpose(0, 2, 3, 1)
+        pert_np = np.clip(pert_np * 255.0, 0, 255).astype("uint8")
+        encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), int(ratio)]
+        for i in range(pert_np.shape[0]):
+            _, encimg = cv2.imencode(".jpg", pert_np[i], encode_params)
+            pert_np[i] = cv2.imdecode(encimg, 1)
+
+        compress_pert = pert_np.transpose((0, 3, 1, 2))
+        compress_pert = torch.from_numpy(compress_pert / 255.0).float().cuda()
+
+        return compress_pert
+
+    def _rotate(self, pert: torch.tensor, angle: float) -> None:
+        import torchvision.transforms.functional as F
+
+        rotated_tensor = torch.stack([F.rotate(tensor, angle) for tensor in pert])
+
+        return rotated_tensor
+
+    def GAN_SRC_robust(self) -> None:
+        pass
+
+    def GAN_TGT_robust(self) -> None:
+        gauss_mean, gauss_std = 0, 0.1
+        gauss_size, gauss_sigma = 5, 3.0
+        jpeg_ratio = 70
+
+        model_path = join("checkpoints", self.args.gan_test_models)
+        self.GAN_G.load_state_dict(torch.load(model_path)["GAN_G_state_dict"])
+
+        self.target.cuda().eval()
+        self.GAN_G.cuda().eval()
+
+        source_path = [
+            join(self.samples_dir, "zrf.jpg"),
+            join(self.samples_dir, "zrf.jpg"),
+            join(self.samples_dir, "zrf.jpg"),
+        ]
+        target_path = [
+            join(self.samples_dir, "zjl.jpg"),
+            join(self.samples_dir, "6.jpg"),
+            join(self.samples_dir, "hzxc.jpg"),
+        ]
+
+        source_imgs = self._load_imgs(source_path)
+        target_imgs = self._load_imgs(target_path)
+        source_identity = self._get_imgs_identity(source_imgs)
+        swap_imgs = self.target(None, target_imgs, source_identity, None, True)
+
+        pert_imgs = self.GAN_G(target_imgs)
+        pert_swap_imgs = self.target(None, pert_imgs, source_identity, None, True)
+
+        noise_imgs = self._gauss_noise(pert_imgs, gauss_mean, gauss_std)
+        noise_swap_imgs = self.target(None, noise_imgs, source_identity, None, True)
+
+        blur_imgs = self._gauss_blur(pert_imgs, gauss_size, gauss_sigma)
+        blur_swap_imgs = self.target(None, blur_imgs, source_identity, None, True)
+
+        compress_imgs = self._jpeg_compress(pert_imgs, jpeg_ratio)
+        compress_swap_imgs = self.target(
+            None, compress_imgs, source_identity, None, True
+        )
+
+        rotate_imgs = self._rotate(pert_imgs, random.random() * 360)
+        rotate_swap_imgs = self.target(None, rotate_imgs, source_identity, None, True)
+        self._save_imgs(
+            [
+                source_imgs,
+                target_imgs,
+                swap_imgs,
+                pert_imgs,
+                pert_swap_imgs,
+                noise_imgs,
+                noise_swap_imgs,
+                blur_imgs,
+                blur_swap_imgs,
+                compress_imgs,
+                compress_swap_imgs,
+                rotate_imgs,
+                rotate_swap_imgs,
+            ]
+        )
+
+        source_imgs_path, target_imgs_path = self._get_split_all_imgs_path()
+        efficiencies = {
+            "clean": [],
+            "pert": [],
+            "noise": [],
+            "blur": [],
+            "compress": [],
+            "rotate": [],
+        }
+        for i in range(self.args.gan_test_times):
+            iter_source_path = random.sample(source_imgs_path, self.args.gan_batch_size)
+            iter_target_path = random.sample(target_imgs_path, self.args.gan_batch_size)
+
+            source_imgs = self._load_imgs(iter_source_path)
+            target_imgs = self._load_imgs(iter_target_path)
+            source_identity = self._get_imgs_identity(source_imgs)
+            swap_imgs = self.target(None, target_imgs, source_identity, None, True)
+
+            pert_imgs = self.GAN_G(target_imgs)
+            pert_swap_imgs = self.target(None, pert_imgs, source_identity, None, True)
+
+            noise_imgs = self._gauss_noise(pert_imgs, gauss_mean, gauss_std)
+            noise_swap_imgs = self.target(None, noise_imgs, source_identity, None, True)
+
+            blur_imgs = self._gauss_blur(pert_imgs, gauss_size, gauss_sigma)
+            blur_swap_imgs = self.target(None, blur_imgs, source_identity, None, True)
+
+            compress_imgs = self._jpeg_compress(pert_imgs, jpeg_ratio)
+            compress_swap_imgs = self.target(
+                None, compress_imgs, source_identity, None, True
+            )
+
+            rotate_imgs = self._rotate(pert_imgs, random.random() * 360)
+            rotate_swap_imgs = self.target(
+                None, rotate_imgs, source_identity, None, True
+            )
+
+            clean_swap_effi, pert_swap_effi = self._calculate_efficiency(
+                source_imgs, swap_imgs, pert_swap_imgs
+            )
+            efficiencies["clean"].append(clean_swap_effi)
+            efficiencies["pert"].append(pert_swap_effi)
+
+            _, noise_swap_effi = self._calculate_efficiency(
+                source_imgs, swap_imgs, noise_imgs
+            )
+            efficiencies["noise"].append(noise_swap_effi)
+
+            _, blur_swap_effi = self._calculate_efficiency(
+                source_imgs, swap_imgs, blur_imgs
+            )
+            efficiencies["blur"].append(blur_swap_effi)
+
+            _, compress_swap_effi = self._calculate_efficiency(
+                source_imgs, swap_imgs, compress_imgs
+            )
+            efficiencies["compress"].append(compress_swap_effi)
+
+            _, rotate_swap_effi = self._calculate_efficiency(
+                source_imgs, swap_imgs, rotate_imgs
+            )
+            efficiencies["rotate"].append(rotate_swap_effi)
+
+            from utils import calculate_score
+
+            utility = self._calculate_utility(target_imgs, pert_imgs)
+            pert_score = calculate_score(utility, clean_swap_effi, pert_swap_effi)
+            noise_score = calculate_score(utility, clean_swap_effi, noise_swap_effi)
+            blur_score = calculate_score(utility, clean_swap_effi, blur_swap_effi)
+            compress_score = calculate_score(
+                utility, clean_swap_effi, compress_swap_effi
+            )
+            rotate_score = calculate_score(utility, clean_swap_effi, rotate_swap_effi)
+
+            self.logger.info(
+                f"Iter {i:3}, utility: {utility:.3f}, efficiency: {clean_swap_effi:.3f}, {pert_swap_effi:.3f}, {noise_swap_effi:.3f}, {blur_swap_effi:.3f}, {compress_swap_effi:.3f}, {rotate_swap_effi:.3f}, score: {pert_score:.3f}, {noise_score:.3f}, {blur_score:.3f}, {compress_score:.3f}, {rotate_score:.3f}"
+            )
+
+        self.logger.info(
+            f"Average of {self.args.gan_batch_size * self.args.gan_test_times} pictures: efficiency: {sum(efficiencies["clean"])/len(efficiencies["clean"]):.3f}, {sum(efficiencies["pert"])/len(efficiencies["pert"]):.3f}, {sum(efficiencies["noise"])/len(efficiencies["noise"]):.3f}, {sum(efficiencies["blur"])/len(efficiencies["blur"]):.3f}, {sum(efficiencies["compress"])/len(efficiencies["compress"]):.3f}, {sum(efficiencies["rotate"])/len(efficiencies["rotate"]):.3f}"
         )

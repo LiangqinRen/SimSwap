@@ -25,6 +25,8 @@ def main():
         "gan_tgt": defense.GAN_TGT,
         "gan_src_test": defense.GAN_SRC_test,
         "gan_tgt_test": defense.GAN_TGT_test,
+        "gan_src_robust": defense.GAN_SRC_robust,
+        "gan_tgt_robust": defense.GAN_TGT_robust,
     }
 
     if args.method in defense_functions:
