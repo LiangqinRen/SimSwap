@@ -34,7 +34,7 @@ class SimSwapDefense(nn.Module):
 
         self.gan_rgb_limits = [0.075, 0.03, 0.075]
         self.gan_src_loss_limits = [0.01, 0.01]
-        self.gan_tgt_loss_limits = [0.05, 3.0]
+        self.gan_tgt_loss_limits = [0.05, 10.0]
         self.gan_src_loss_weights = [3, 10, 0.1]  # pert, swap diff, identity diff
         self.gan_tgt_loss_weights = [
             30,

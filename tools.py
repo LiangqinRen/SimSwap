@@ -24,7 +24,8 @@ def calculate_score(
 
 
 def main():
-    calculate_score(0.935, 0.741, 0.736)
+    calculate_score(0.830, 0.741, 0.007)
+    calculate_score(0.699, 0.741, 0.633)
 
 
 if __name__ == "__main__":

@@ -72,7 +72,7 @@ threadpoolctl==3.2.0
 tifffile==2023.12.9
 torch==2.2.2
 torch-tb-profiler==0.4.3
-torchaudio==2.1.2
+torchaudio==2.2.2
 torchvision==0.17.2
 tqdm==4.66.1
 triton==2.2.0
