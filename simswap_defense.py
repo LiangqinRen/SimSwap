@@ -1241,5 +1241,5 @@ class SimSwapDefense(nn.Module):
             )
 
         self.logger.info(
-            f"Average of {self.args.gan_batch_size * self.args.gan_test_times} pictures: efficiency: {sum(efficiencies["clean"])/len(efficiencies["clean"]):.3f}, {sum(efficiencies["pert"])/len(efficiencies["pert"]):.3f}, {sum(efficiencies["noise"])/len(efficiencies["noise"]):.3f}, {sum(efficiencies["blur"])/len(efficiencies["blur"]):.3f}, {sum(efficiencies["compress"])/len(efficiencies["compress"]):.3f}, {sum(efficiencies["rotate"])/len(efficiencies["rotate"]):.3f}"
+            f"Average of {self.args.gan_batch_size * self.args.gan_test_times} pictures: efficiency: {sum(efficiencies['clean'])/len(efficiencies['clean']):.3f}, {sum(efficiencies['pert'])/len(efficiencies['pert']):.3f}, {sum(efficiencies['noise'])/len(efficiencies['noise']):.3f}, {sum(efficiencies['blur'])/len(efficiencies['blur']):.3f}, {sum(efficiencies['compress'])/len(efficiencies['compress']):.3f}, {sum(efficiencies['rotate'])/len(efficiencies['rotate']):.3f}"
         )
