@@ -3,6 +3,7 @@ import random
 import time
 import math
 import cv2
+import shutil
 
 import torch
 import torchvision
@@ -32,10 +33,12 @@ class SimSwapDefense(nn.Module):
 
         self.samples_dir = join(args.data_dir, "samples")
         self.dataset_dir = join(args.data_dir, "vggface2_crop_224")
+        self.trainset_dir = join(args.data_dir, "train")
+        self.testset_dir = join(args.data_dir, "test")
 
         self.gan_rgb_limits = [0.075, 0.03, 0.075]
         self.gan_src_loss_limits = [0.01, 0.01]
-        self.gan_tgt_loss_limits = [0.05, 10.0]
+        self.gan_tgt_loss_limits = [0.05, 7.5]
         self.gan_src_loss_weights = [3, 10, 0.1]  # pert, swap diff, identity diff
         self.gan_tgt_loss_weights = [
             30,
@@ -50,11 +53,25 @@ class SimSwapDefense(nn.Module):
         self.utility = Utility()
         self.efficiency = Efficiency(None)
 
+    def split_dataset(self) -> None:
+        all_people = os.listdir(self.dataset_dir)
+        testset_people = random.sample(all_people, self.args.testset_people_count)
+
+        os.makedirs(self.trainset_dir, exist_ok=True)
+        os.makedirs(self.testset_dir, exist_ok=True)
+
+        for i, people in enumerate(all_people, start=1):
+            self.logger.info(f"{i:4}/{len(all_people):4}|Copy folder {people}")
+            shutil.copytree(
+                join(self.dataset_dir, people),
+                (
+                    join(self.testset_dir, people)
+                    if people in testset_people
+                    else join(self.trainset_dir, people)
+                ),
+            )
+
     def _load_imgs(self, imgs_path: list[str]) -> torch.tensor:
-        """
-        Args:
-            imgs_path (list[str]): the path should be the full path
-        """
         transformer = transforms.Compose([transforms.ToTensor()])
         imgs = [transformer(Image.open(path).convert("RGB")) for path in imgs_path]
         imgs = torch.stack(imgs)
@@ -581,17 +598,20 @@ class SimSwapDefense(nn.Module):
             f"Utility: {np.mean(utilities)}, Efficiency: {sum(v[0] for v in efficiencies) / len(efficiencies):.5f},{sum(v[1] for v in efficiencies) / len(efficiencies):.5f}"
         )
 
-    def _get_all_imgs_path(self) -> list[str]:
-        all_people = os.listdir(self.dataset_dir)
+    def _get_all_imgs_path(self, train_set: bool = True) -> list[str]:
+        set_to_load = self.trainset_dir if train_set else self.testset_dir
+        all_people = os.listdir(set_to_load)
         all_imgs_path = []
         for people in all_people:
-            people_dir = join(self.dataset_dir, people)
+            people_dir = join(set_to_load, people)
             all_imgs_name = os.listdir(people_dir)
             all_imgs_path.extend(
-                [join(self.dataset_dir, people, name) for name in all_imgs_name]
+                [join(set_to_load, people, name) for name in all_imgs_name]
             )
 
-        self.logger.info(f"Collect {len(all_imgs_path)} images for GAN training")
+        self.logger.info(
+            f"Collect {len(all_imgs_path)} images for GAN {'training' if train_set else 'test'}"
+        )
         return all_imgs_path
 
     def GAN_SRC(self):
@@ -634,11 +654,12 @@ class SimSwapDefense(nn.Module):
         os.mkdir(checkpoint_dir)
 
         best_loss = float("inf")
-        all_imgs_path = self._get_all_imgs_path()
+        train_imgs_path = self._get_all_imgs_path(train_set=True)
+        test_imgs_path = self._get_all_imgs_path(train_set=False)
         for epoch in range(self.args.gan_epochs):
             self.GAN_G.cuda().train()
-            src_imgs_path = random.sample(all_imgs_path, self.args.gan_batch_size)
-            tgt_imgs_path = random.sample(all_imgs_path, self.args.gan_batch_size)
+            src_imgs_path = random.sample(train_imgs_path, self.args.gan_batch_size)
+            tgt_imgs_path = random.sample(train_imgs_path, self.args.gan_batch_size)
 
             src_imgs = self._load_imgs(src_imgs_path)
             src_identity = self._get_imgs_identity(src_imgs)
@@ -683,7 +704,7 @@ class SimSwapDefense(nn.Module):
                     self.GAN_G.eval()
                     self.target.eval()
 
-                    src_imgs_path = random.sample(all_imgs_path, 7)
+                    src_imgs_path = random.sample(test_imgs_path, 7)
                     src_imgs_path.extend(
                         [
                             join(self.samples_dir, "zjl.jpg"),
@@ -691,7 +712,7 @@ class SimSwapDefense(nn.Module):
                             join(self.samples_dir, "jl.jpg"),
                         ]
                     )
-                    tgt_imgs_path = random.sample(all_imgs_path, 7)
+                    tgt_imgs_path = random.sample(test_imgs_path, 7)
                     tgt_imgs_path.extend(
                         [
                             join(self.samples_dir, "zrf.jpg"),
@@ -788,12 +809,12 @@ class SimSwapDefense(nn.Module):
         os.mkdir(checkpoint_dir)
 
         best_loss = float("inf")
-        all_imgs_path = self._get_all_imgs_path()
-
+        train_imgs_path = self._get_all_imgs_path(train_set=True)
+        test_imgs_path = self._get_all_imgs_path(train_set=False)
         for epoch in range(self.args.gan_epochs):
             self.GAN_G.cuda().train()
-            src_imgs_path = random.sample(all_imgs_path, self.args.gan_batch_size)
-            tgt_imgs_path = random.sample(all_imgs_path, self.args.gan_batch_size)
+            src_imgs_path = random.sample(train_imgs_path, self.args.gan_batch_size)
+            tgt_imgs_path = random.sample(train_imgs_path, self.args.gan_batch_size)
 
             src_imgs = self._load_imgs(src_imgs_path)
             src_identity = self._get_imgs_identity(src_imgs)
@@ -843,7 +864,7 @@ class SimSwapDefense(nn.Module):
                     self.GAN_G.eval()
                     self.target.eval()
 
-                    src_imgs_path = random.sample(all_imgs_path, 7)
+                    src_imgs_path = random.sample(test_imgs_path, 7)
                     src_imgs_path.extend(
                         [
                             join(self.samples_dir, "zrf.jpg"),
@@ -851,7 +872,7 @@ class SimSwapDefense(nn.Module):
                             join(self.samples_dir, "zrf.jpg"),
                         ]
                     )
-                    tgt_imgs_path = random.sample(all_imgs_path, 7)
+                    tgt_imgs_path = random.sample(test_imgs_path, 7)
                     tgt_imgs_path.extend(
                         [
                             join(self.samples_dir, "zjl.jpg"),
@@ -889,8 +910,8 @@ class SimSwapDefense(nn.Module):
                     log_save_path,
                 )
 
-    def _get_split_all_imgs_path(self) -> tuple[list[str], list[str]]:
-        all_people = os.listdir(self.dataset_dir)
+    def _get_split_test_imgs_path(self) -> tuple[list[str], list[str]]:
+        all_people = os.listdir(self.testset_dir)
         random.shuffle(all_people)
 
         source_people = all_people[: int(len(all_people) / 2)]
@@ -898,18 +919,18 @@ class SimSwapDefense(nn.Module):
 
         source_imgs_path = []
         for people in source_people:
-            people_dir = join(self.dataset_dir, people)
+            people_dir = join(self.testset_dir, people)
             people_imgs_name = os.listdir(people_dir)
             source_imgs_path.extend(
-                [join(self.dataset_dir, people, name) for name in people_imgs_name]
+                [join(self.testset_dir, people, name) for name in people_imgs_name]
             )
 
         target_imgs_path = []
         for people in target_people:
-            people_dir = join(self.dataset_dir, people)
+            people_dir = join(self.testset_dir, people)
             people_imgs_name = os.listdir(people_dir)
             target_imgs_path.extend(
-                [join(self.dataset_dir, people, name) for name in people_imgs_name]
+                [join(self.testset_dir, people, name) for name in people_imgs_name]
             )
 
         return source_imgs_path, target_imgs_path
@@ -949,12 +970,20 @@ class SimSwapDefense(nn.Module):
             [source_imgs, target_imgs, swap_imgs, pert_source_imgs, pert_swap_imgs]
         )
 
-        source_imgs_path, target_imgs_path = self._get_split_all_imgs_path()
+        source_imgs_path, target_imgs_path = self._get_split_test_imgs_path()
         utilities, clean_efficiencies, pert_efficiencies = [], [], []
         scores = []
-        for i in range(self.args.gan_test_times):
-            iter_source_path = random.sample(source_imgs_path, self.args.gan_batch_size)
-            iter_target_path = random.sample(target_imgs_path, self.args.gan_batch_size)
+        total_batch = (
+            min(len(source_imgs_path), len(target_imgs_path))
+            // self.args.gan_batch_size
+        )
+        for i in range(total_batch):
+            iter_source_path = source_imgs_path[
+                i * self.args.gan_batch_size : (i + 1) * self.args.gan_batch_size
+            ]
+            iter_target_path = target_imgs_path[
+                i * self.args.gan_batch_size : (i + 1) * self.args.gan_batch_size
+            ]
 
             source_imgs = self._load_imgs(iter_source_path)
             target_imgs = self._load_imgs(iter_target_path)
@@ -982,7 +1011,7 @@ class SimSwapDefense(nn.Module):
             )
 
         self.logger.info(
-            f"Average of {self.args.gan_batch_size * self.args.gan_test_times} pictures: utility: {sum(utilities)/len(utilities):.3f}, efficiency: {sum(clean_efficiencies)/len(clean_efficiencies):.3f}, {sum(pert_efficiencies)/len(pert_efficiencies):.3f}, score: {sum(scores)/len(scores):.3f}"
+            f"Average of {self.args.gan_batch_size * total_batch} pictures: utility: {sum(utilities)/len(utilities):.3f}, efficiency: {sum(clean_efficiencies)/len(clean_efficiencies):.3f}, {sum(pert_efficiencies)/len(pert_efficiencies):.3f}, score: {sum(scores)/len(scores):.3f}"
         )
 
     def GAN_TGT_test(self):
@@ -1019,12 +1048,20 @@ class SimSwapDefense(nn.Module):
             [source_imgs, target_imgs, swap_imgs, pert_target_imgs, pert_swap_imgs]
         )
 
-        source_imgs_path, target_imgs_path = self._get_split_all_imgs_path()
+        source_imgs_path, target_imgs_path = self._get_split_test_imgs_path()
         utilities, clean_efficiencies, pert_efficiencies = [], [], []
         scores = []
-        for i in range(self.args.gan_test_times):
-            iter_source_path = random.sample(source_imgs_path, self.args.gan_batch_size)
-            iter_target_path = random.sample(target_imgs_path, self.args.gan_batch_size)
+        total_batch = (
+            min(len(source_imgs_path), len(target_imgs_path))
+            // self.args.gan_batch_size
+        )
+        for i in range(total_batch):
+            iter_source_path = source_imgs_path[
+                i * self.args.gan_batch_size : (i + 1) * self.args.gan_batch_size
+            ]
+            iter_target_path = target_imgs_path[
+                i * self.args.gan_batch_size : (i + 1) * self.args.gan_batch_size
+            ]
 
             source_imgs = self._load_imgs(iter_source_path)
             target_imgs = self._load_imgs(iter_target_path)
@@ -1051,7 +1088,7 @@ class SimSwapDefense(nn.Module):
             )
 
         self.logger.info(
-            f"Average of {self.args.gan_batch_size * self.args.gan_test_times} pictures: utility: {sum(utilities)/len(utilities):.3f}, efficiency: {sum(clean_efficiencies)/len(clean_efficiencies):.3f}, {sum(pert_efficiencies)/len(pert_efficiencies):.3f}, score: {sum(scores)/len(scores):.3f}"
+            f"Average of {self.args.gan_batch_size * total_batch} pictures: utility: {sum(utilities)/len(utilities):.3f}, efficiency: {sum(clean_efficiencies)/len(clean_efficiencies):.3f}, {sum(pert_efficiencies)/len(pert_efficiencies):.3f}, score: {sum(scores)/len(scores):.3f}"
         )
 
     def _gauss_noise(
@@ -1162,7 +1199,7 @@ class SimSwapDefense(nn.Module):
             ]
         )
 
-        source_imgs_path, target_imgs_path = self._get_split_all_imgs_path()
+        source_imgs_path, target_imgs_path = self._get_split_test_imgs_path()
         efficiencies = {
             "clean": [],
             "pert": [],
@@ -1171,9 +1208,17 @@ class SimSwapDefense(nn.Module):
             "compress": [],
             "rotate": [],
         }
-        for i in range(self.args.gan_test_times):
-            iter_source_path = random.sample(source_imgs_path, self.args.gan_batch_size)
-            iter_target_path = random.sample(target_imgs_path, self.args.gan_batch_size)
+        total_batch = (
+            min(len(source_imgs_path), len(target_imgs_path))
+            // self.args.gan_batch_size
+        )
+        for i in range(total_batch):
+            iter_source_path = source_imgs_path[
+                i * self.args.gan_batch_size : (i + 1) * self.args.gan_batch_size
+            ]
+            iter_target_path = target_imgs_path[
+                i * self.args.gan_batch_size : (i + 1) * self.args.gan_batch_size
+            ]
 
             source_imgs = self._load_imgs(iter_source_path)
             target_imgs = self._load_imgs(iter_target_path)
@@ -1241,5 +1286,5 @@ class SimSwapDefense(nn.Module):
             )
 
         self.logger.info(
-            f"Average of {self.args.gan_batch_size * self.args.gan_test_times} pictures: efficiency: {sum(efficiencies['clean'])/len(efficiencies['clean']):.3f}, {sum(efficiencies['pert'])/len(efficiencies['pert']):.3f}, {sum(efficiencies['noise'])/len(efficiencies['noise']):.3f}, {sum(efficiencies['blur'])/len(efficiencies['blur']):.3f}, {sum(efficiencies['compress'])/len(efficiencies['compress']):.3f}, {sum(efficiencies['rotate'])/len(efficiencies['rotate']):.3f}"
+            f"Average of {self.args.gan_batch_size * total_batch} pictures: efficiency: {sum(efficiencies['clean'])/len(efficiencies['clean']):.3f}, {sum(efficiencies['pert'])/len(efficiencies['pert']):.3f}, {sum(efficiencies['noise'])/len(efficiencies['noise']):.3f}, {sum(efficiencies['blur'])/len(efficiencies['blur']):.3f}, {sum(efficiencies['compress'])/len(efficiencies['compress']):.3f}, {sum(efficiencies['rotate'])/len(efficiencies['rotate']):.3f}"
         )

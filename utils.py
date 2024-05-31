@@ -74,6 +74,8 @@ def get_argparser():
     parser.add_argument("--data_dir", type=str, default="crop_224")
     parser.add_argument("--random_seed", type=int, default=0)
 
+    parser.add_argument("--testset_people_count", type=int, default=863)
+
     parser.add_argument("--swap_source", type=str)
     parser.add_argument("--swap_target", type=str)
 
@@ -94,7 +96,6 @@ def get_argparser():
     parser.add_argument("--gan_batch_size", type=int, default=16)
     parser.add_argument("--gan_generator_lr", type=float, default=5e-4)
     parser.add_argument("--gan_generator_interval", type=int, default=100)
-    parser.add_argument("--gan_test_times", type=int, default=500)
     parser.add_argument("--gan_test_models", type=str)
 
     parser.add_argument("--eval_A", type=str)

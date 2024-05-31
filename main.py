@@ -15,6 +15,7 @@ def main():
 
     defense = simswap_defense.SimSwapDefense(args, logger)
     defense_functions = {
+        "split": defense.split_dataset,
         "swap": defense.swap,
         "metric": defense.calculate_efficiency_threshold,
         "pgd_src_single": defense.pgd_source_single,
