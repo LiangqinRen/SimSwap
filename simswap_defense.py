@@ -1084,11 +1084,11 @@ class SimSwapDefense(nn.Module):
             scores.append(score)
 
             self.logger.info(
-                f"Iter {i:3}, utility: {utility:.3f}, efficiency: {source_clean_swap:.3f}, {source_pert_swap:.3f}, score: {score:.3f}"
+                f"Iter {i:4}/{total_batch:4}, utility: {utility:.3f}, efficiency: {source_clean_swap:.3f}, {source_pert_swap:.3f}, score: {score:.3f}"
             )
 
         self.logger.info(
-            f"Average of {self.args.gan_batch_size * total_batch} pictures: utility: {sum(utilities)/len(utilities):.3f}, efficiency: {sum(clean_efficiencies)/len(clean_efficiencies):.3f}, {sum(pert_efficiencies)/len(pert_efficiencies):.3f}, score: {sum(scores)/len(scores):.3f}"
+            f"Average of {total_batch:4} batch and {self.args.gan_batch_size * total_batch:6} pictures: utility: {sum(utilities)/len(utilities):.3f}, efficiency: {sum(clean_efficiencies)/len(clean_efficiencies):.3f}, {sum(pert_efficiencies)/len(pert_efficiencies):.3f}, score: {sum(scores)/len(scores):.3f}"
         )
 
     def _gauss_noise(
