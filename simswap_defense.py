@@ -664,8 +664,6 @@ class SimSwapDefense(nn.Module):
             src_imgs = self._load_imgs(src_imgs_path)
             src_identity = self._get_imgs_identity(src_imgs)
             tgt_imgs = self._load_imgs(tgt_imgs_path)
-
-            src_identity = self._get_imgs_identity(src_imgs)
             tgt_swap_imgs = self.target(None, tgt_imgs, src_identity, None, True)
 
             pert_src_imgs = self.GAN_G(src_imgs)
@@ -1251,40 +1249,46 @@ class SimSwapDefense(nn.Module):
             efficiencies["pert"].append(pert_swap_effi)
 
             _, noise_swap_effi = self._calculate_efficiency(
-                source_imgs, swap_imgs, noise_imgs
+                source_imgs, swap_imgs, noise_swap_imgs
             )
             efficiencies["noise"].append(noise_swap_effi)
 
             _, blur_swap_effi = self._calculate_efficiency(
-                source_imgs, swap_imgs, blur_imgs
+                source_imgs, swap_imgs, blur_swap_imgs
             )
             efficiencies["blur"].append(blur_swap_effi)
 
             _, compress_swap_effi = self._calculate_efficiency(
-                source_imgs, swap_imgs, compress_imgs
+                source_imgs, swap_imgs, compress_swap_imgs
             )
             efficiencies["compress"].append(compress_swap_effi)
 
             _, rotate_swap_effi = self._calculate_efficiency(
-                source_imgs, swap_imgs, rotate_imgs
+                source_imgs, swap_imgs, rotate_swap_imgs
             )
             efficiencies["rotate"].append(rotate_swap_effi)
 
-            from utils import calculate_score
+            del (
+                swap_imgs,
+                pert_swap_imgs,
+                noise_imgs,
+                noise_swap_imgs,
+                blur_imgs,
+                blur_swap_imgs,
+                compress_imgs,
+                compress_swap_imgs,
+                rotate_imgs,
+                rotate_swap_imgs,
+            )
 
             utility = self._calculate_utility(target_imgs, pert_imgs)
-            pert_score = calculate_score(utility, clean_swap_effi, pert_swap_effi)
-            noise_score = calculate_score(utility, clean_swap_effi, noise_swap_effi)
-            blur_score = calculate_score(utility, clean_swap_effi, blur_swap_effi)
-            compress_score = calculate_score(
-                utility, clean_swap_effi, compress_swap_effi
-            )
-            rotate_score = calculate_score(utility, clean_swap_effi, rotate_swap_effi)
 
             self.logger.info(
-                f"Iter {i:3}, utility: {utility:.3f}, efficiency: {clean_swap_effi:.3f}, {pert_swap_effi:.3f}, {noise_swap_effi:.3f}, {blur_swap_effi:.3f}, {compress_swap_effi:.3f}, {rotate_swap_effi:.3f}, score: {pert_score:.3f}, {noise_score:.3f}, {blur_score:.3f}, {compress_score:.3f}, {rotate_score:.3f}"
+                f"Iter {i:4}/{total_batch:4}, utility: {utility:.3f}, efficiency: {clean_swap_effi:.3f}, {pert_swap_effi:.3f}, {noise_swap_effi:.3f}, {blur_swap_effi:.3f}, {compress_swap_effi:.3f}, {rotate_swap_effi:.3f}"
             )
 
+            torch.cuda.empty_cache()
+
         self.logger.info(
-            f"Average of {self.args.gan_batch_size * total_batch} pictures: efficiency: {sum(efficiencies['clean'])/len(efficiencies['clean']):.3f}, {sum(efficiencies['pert'])/len(efficiencies['pert']):.3f}, {sum(efficiencies['noise'])/len(efficiencies['noise']):.3f}, {sum(efficiencies['blur'])/len(efficiencies['blur']):.3f}, {sum(efficiencies['compress'])/len(efficiencies['compress']):.3f}, {sum(efficiencies['rotate'])/len(efficiencies['rotate']):.3f}"
+            f"Average of {total_batch:4} batch and {self.args.gan_batch_size * total_batch:6} pictures: efficiency: {sum(efficiencies['clean'])/len(efficiencies['clean']):.3f}, {sum(efficiencies['pert'])/len(efficiencies['pert']):.3f}, {sum(efficiencies['noise'])/len(efficiencies['noise']):.3f}, {sum(efficiencies['blur'])/len(efficiencies['blur']):.3f}, {sum(efficiencies['compress'])/len(efficiencies['compress']):.3f}, {sum(efficiencies['rotate'])/len(efficiencies['rotate']):.3f}"
         )
