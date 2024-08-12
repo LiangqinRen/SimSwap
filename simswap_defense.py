@@ -985,11 +985,11 @@ class SimSwapDefense(nn.Module):
 
             source_imgs = self._load_imgs(iter_source_path)
             target_imgs = self._load_imgs(iter_target_path)
-            source_identity = self._get_img_identity(source_imgs)
+            source_identity = self._get_imgs_identity(source_imgs)
             swap_imgs = self.target(None, target_imgs, source_identity, None, True)
 
             pert_source_imgs = self.GAN_G(source_imgs)
-            pert_source_identity = self._get_img_identity(pert_source_imgs)
+            pert_source_identity = self._get_imgs_identity(pert_source_imgs)
             pert_swap_imgs = self.target(
                 None, target_imgs, pert_source_identity, None, True
             )
