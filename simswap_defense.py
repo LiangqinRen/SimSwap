@@ -39,7 +39,12 @@ class SimSwapDefense(nn.Module):
         self.gan_rgb_limits = [0.075, 0.03, 0.075]
         self.gan_src_loss_limits = [0.01, 0.01]
         self.gan_tgt_loss_limits = [0.05, 7.5]
-        self.gan_src_loss_weights = [60, 10, 0.1]  # pert, swap diff, identity diff
+        self.gan_src_loss_weights = [
+            60,
+            10,
+            0.1,
+            15,
+        ]  # pert, swap diff, identity diff, identity mimic
         self.gan_tgt_loss_weights = [
             30,
             10,
@@ -614,6 +619,40 @@ class SimSwapDefense(nn.Module):
         )
         return all_imgs_path
 
+    def _get_average_identity(self) -> torch.tensor:
+        mean_identity_path = join("checkpoints", "average_identity.pt")
+        if os.path.exists(mean_identity_path):
+            mean_identity = torch.load(mean_identity_path).cuda()
+        else:
+            train_imgs_path = self._get_all_imgs_path(train_set=True)
+            identity_sum = None
+            for i in tqdm(range(len(train_imgs_path) // self.args.gan_batch_size)):
+                imgs = self._load_imgs(
+                    train_imgs_path[
+                        i
+                        * self.args.gan_batch_size : (i + 1)
+                        * self.args.gan_batch_size
+                    ]
+                )
+                identity = self._get_imgs_identity(imgs)
+                identity = identity.detach()
+                if identity_sum is None:
+                    identity_sum = identity
+                else:
+                    identity_sum += identity
+                del identity
+
+            mean_identity = identity_sum / (
+                len(train_imgs_path) // self.args.gan_batch_size
+            )
+            mean_identity = torch.mean(mean_identity, dim=0)
+            mean_identity = mean_identity.unsqueeze(0)
+            print(mean_identity, mean_identity.shape)
+
+            torch.save(mean_identity, mean_identity_path)
+
+        return mean_identity
+
     def GAN_SRC(self):
         self.logger.info(
             f"rgb_limits: {self.gan_rgb_limits}, loss_limits: {self.gan_src_loss_limits}, loss_weights: {self.gan_src_loss_weights}"
@@ -656,6 +695,10 @@ class SimSwapDefense(nn.Module):
         best_loss = float("inf")
         train_imgs_path = self._get_all_imgs_path(train_set=True)
         test_imgs_path = self._get_all_imgs_path(train_set=False)
+
+        average_identity = self._get_average_identity().expand(
+            self.args.gan_batch_size, 512
+        )
         for epoch in range(self.args.gan_epochs):
             self.GAN_G.cuda().train()
             src_imgs_path = random.sample(train_imgs_path, self.args.gan_batch_size)
@@ -683,18 +726,22 @@ class SimSwapDefense(nn.Module):
                 0.0,
                 self.gan_src_loss_limits[1],
             )
+            identity_mimic_loss = l2_loss(
+                flatten(pert_src_identity), flatten(average_identity)
+            )
 
             G_loss = (
                 self.gan_src_loss_weights[0] * pert_diff_loss
                 + self.gan_src_loss_weights[1] * swap_diff_loss
                 + self.gan_src_loss_weights[2] * identity_diff_loss
+                + self.gan_src_loss_weights[3] * identity_mimic_loss
             )
             G_loss.backward()
             optimizer_G.step()
             scheduler.step()
 
             self.logger.info(
-                f"[Epoch {epoch:6}]loss: {G_loss:8.5f}({self.gan_src_loss_weights[0] * pert_diff_loss.item():.5f}, {self.gan_src_loss_weights[1] * swap_diff_loss.item():.5f}, {self.gan_src_loss_weights[2] * identity_diff_loss.item():.5f})({swap_diff_loss.item():.5f}, {identity_diff_loss.item():.5f})"
+                f"[Epoch {epoch:6}]loss: {G_loss:8.5f}({self.gan_src_loss_weights[0] * pert_diff_loss.item():.5f}, {self.gan_src_loss_weights[1] * swap_diff_loss.item():.5f}, {self.gan_src_loss_weights[2] * identity_diff_loss.item():.5f}, {self.gan_src_loss_weights[3] * identity_mimic_loss.item():.5f})({pert_diff_loss.item():.5f}, {swap_diff_loss.item():.5f}, {identity_diff_loss.item():.5f}, {identity_mimic_loss.item():.5f})"
             )
 
             if epoch % self.args.gan_generator_interval == 0:

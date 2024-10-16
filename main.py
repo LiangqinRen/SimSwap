@@ -28,6 +28,7 @@ def main():
         "gan_tgt_test": defense.GAN_TGT_test,
         "gan_src_robust": defense.GAN_SRC_robust,
         "gan_tgt_robust": defense.GAN_TGT_robust,
+        "test": defense._get_average_identity,
     }
 
     if args.method in defense_functions:
