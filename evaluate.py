@@ -12,16 +12,22 @@ class Utility:
         pass
 
     def compare(self, imgs1_list, imgs2_list):
+        MSE = []
         SSIM = []
+        PSNR = []
         for idx in range(min(imgs1_list.shape[0], imgs2_list.shape[0])):
             img1 = imgs1_list[idx]
             img2 = imgs2_list[idx]
+            mse = metrics.mean_squared_error(img1, img2)
+            psnr = metrics.peak_signal_noise_ratio(img1, img2, data_range=255)
             ssim = metrics.structural_similarity(
                 img1, img2, channel_axis=2, multichannel=True, data_range=1
             )
+            MSE.append(mse)
             SSIM.append(ssim)
+            PSNR.append(psnr)
 
-        return np.mean(SSIM)
+        return np.mean(MSE), np.mean(PSNR), np.mean(SSIM)
 
 
 class Efficiency:

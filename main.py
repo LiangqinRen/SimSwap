@@ -20,6 +20,7 @@ def main():
         "metric": defense.calculate_efficiency_threshold,
         "pgd_src_single": defense.pgd_source_single,
         "pgd_src_multi": defense.pgd_source_multiple,
+        "pgd_src_test": defense.pgd_source_test,
         "pgd_tgt_single": defense.pgd_target_single,
         "pgd_tgt_multi": defense.pgd_target_multiple,
         "gan_src": defense.GAN_SRC,
