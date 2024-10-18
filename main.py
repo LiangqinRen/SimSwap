@@ -23,6 +23,7 @@ def main():
         "pgd_src_test": defense.pgd_source_test,
         "pgd_tgt_single": defense.pgd_target_single,
         "pgd_tgt_multi": defense.pgd_target_multiple,
+        "pgd_tgt_test": defense.pgd_target_test,
         "gan_src": defense.GAN_SRC,
         "gan_tgt": defense.GAN_TGT,
         "gan_src_test": defense.GAN_SRC_test,

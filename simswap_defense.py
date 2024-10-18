@@ -743,6 +743,124 @@ class SimSwapDefense(nn.Module):
             f"Utility: {np.mean(utilities)}, Efficiency: {sum(v[0] for v in efficiencies) / len(efficiencies):.5f},{sum(v[1] for v in efficiencies) / len(efficiencies):.5f}"
         )
 
+    def pgd_target_test(self, loss_weights=[100, 1]):
+        self.logger.info(f"loss_weights: {loss_weights}")
+
+        self.target.cuda().eval()
+        l2_loss = nn.MSELoss().cuda()
+
+        source_imgs_path, target_imgs_path = self._get_split_test_imgs_path()
+        pert_mse_list, pert_psnr_list, pert_ssim_list = [], [], []
+        pert_swap_mse_list, pert_swap_psnr_list, pert_swap_ssim_list = [], [], []
+        (
+            source_pert_efficiencies,
+            clean_swap_efficiencies,
+            pert_swap_efficiencies,
+            anchor_efficiencies,
+        ) = (
+            [],
+            [],
+            [],
+            [],
+        )
+        total_batch = (
+            min(len(source_imgs_path), len(target_imgs_path))
+            // self.args.pgd_batch_size
+        )
+        mimic_img = self._load_imgs([join(self.args.data_dir, self.args.pgd_mimic)])
+        mimic_img_expand = mimic_img.repeat(self.args.pgd_batch_size, 1, 1, 1)
+        mimic_latent_code = self.target.netG.encoder(mimic_img_expand)
+        for i in range(total_batch):
+            iter_source_path = source_imgs_path[
+                i * self.args.pgd_batch_size : (i + 1) * self.args.pgd_batch_size
+            ]
+            iter_target_path = target_imgs_path[
+                i * self.args.pgd_batch_size : (i + 1) * self.args.pgd_batch_size
+            ]
+
+            source_imgs = self._load_imgs(iter_source_path)
+            target_imgs = self._load_imgs(iter_target_path)
+            source_identity = self._get_imgs_identity(source_imgs)
+            swap_imgs = self.target(None, target_imgs, source_identity, None, True)
+
+            x_imgs = target_imgs.clone().detach()
+            epsilon = (
+                self.args.pgd_epsilon
+                * (torch.max(target_imgs) - torch.min(target_imgs))
+                / 2
+            )
+            for epoch in range(self.args.pgd_epochs):
+                x_imgs.requires_grad = True
+
+                x_latent_code = self.target.netG.encoder(x_imgs)
+                pert_diff_loss = l2_loss(x_imgs, target_imgs.detach())
+                latent_code_diff_loss = l2_loss(
+                    x_latent_code, mimic_latent_code.detach()
+                )
+                loss = (
+                    loss_weights[0] * pert_diff_loss
+                    + loss_weights[1] * latent_code_diff_loss
+                )
+
+                loss.backward(retain_graph=True)
+
+                x_imgs = x_imgs.clone().detach() + epsilon * x_imgs.grad.sign()
+                x_imgs = torch.clamp(
+                    x_imgs,
+                    min=target_imgs - self.args.pgd_limit,
+                    max=target_imgs + self.args.pgd_limit,
+                )
+
+                self.logger.info(
+                    f"Iter {i:5}/{total_batch:5}[Epoch {epoch+1:3}/{self.args.pgd_epochs:3}]loss: {loss:.5f}({loss_weights[0] * pert_diff_loss.item():.5f}, {loss_weights[1] * latent_code_diff_loss.item():.5f})"
+                )
+
+            pert_mse, pert_psnr, pert_ssim = self._calculate_utility(
+                target_imgs, x_imgs
+            )
+            pert_mse_list.append(pert_mse)
+            pert_psnr_list.append(pert_psnr)
+            pert_ssim_list.append(pert_ssim)
+
+            x_swap_img = self.target(None, x_imgs, source_identity, None, True)
+            results = torch.cat(
+                (source_imgs, target_imgs, swap_imgs, x_imgs, x_swap_img), dim=0
+            )
+            save_path = join(self.args.log_dir, "image", f"pgd_tgt_{i}.png")
+            save_image(results, save_path, nrow=self.args.pgd_batch_size)
+
+            pert_swap_mse, pert_swap_psnr, pert_swap_ssim = self._calculate_utility(
+                swap_imgs, x_swap_img
+            )
+            pert_swap_mse_list.append(pert_swap_mse)
+            pert_swap_psnr_list.append(pert_swap_psnr)
+            pert_swap_ssim_list.append(pert_swap_ssim)
+
+            target_pert, target_clean_swap, target_pert_swap, anchor = (
+                self._calculate_efficiency(
+                    source_imgs,
+                    target_imgs,
+                    x_imgs,
+                    swap_imgs,
+                    x_swap_img,
+                    mimic_img_expand,
+                )
+            )
+
+            del x_imgs, x_swap_img, results
+            source_pert_efficiencies.append(target_pert)
+            clean_swap_efficiencies.append(target_clean_swap)
+            pert_swap_efficiencies.append(target_pert_swap)
+            anchor_efficiencies.append(anchor)
+
+            self.logger.info(
+                f"Iter {i:5}/{total_batch:5}, pert utility(mse, psnr, ssim): {pert_mse:.3f} {pert_psnr:.3f} {pert_ssim:.3f}, pert swap utility(mse, psnr, ssim): {pert_swap_mse:.3f} {pert_swap_psnr:.3f} {pert_swap_ssim:.3f}, efficiency (pert, clean swap, pert swap, anchor): {target_pert:.3f}, {target_clean_swap:.3f}, {target_pert_swap:.3f}, {anchor:.3f}"
+            )
+            torch.cuda.empty_cache()
+            self.logger.info(
+                f"Average of {self.args.gan_batch_size * total_batch} pictures: pert utility(mse, psnr, ssim): {sum(pert_mse_list)/len(pert_mse_list):.3f} {sum(pert_psnr_list)/len(pert_psnr_list):.3f} {sum(pert_ssim_list)/len(pert_ssim_list):.3f}, pert swap utility(mse, psnr, ssim): {sum(pert_swap_mse_list)/len(pert_swap_mse_list):.3f} {sum(pert_swap_psnr_list)/len(pert_swap_psnr_list):.3f} {sum(pert_swap_ssim_list)/len(pert_swap_ssim_list):.3f}, efficiency(pert, swap, pert swap, anchor): {sum(source_pert_efficiencies)/len(source_pert_efficiencies):.3f}, {sum(clean_swap_efficiencies)/len(clean_swap_efficiencies):.3f}, {sum(pert_swap_efficiencies)/len(pert_swap_efficiencies):.3f}, {sum(anchor_efficiencies)/len(anchor_efficiencies):.3f}"
+            )
+
     def _get_all_imgs_path(self, train_set: bool = True) -> list[str]:
         set_to_load = self.trainset_dir if train_set else self.testset_dir
         all_people = os.listdir(set_to_load)
