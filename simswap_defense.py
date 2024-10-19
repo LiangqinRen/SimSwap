@@ -1216,6 +1216,8 @@ class SimSwapDefense(nn.Module):
     def _get_split_test_imgs_path(self) -> tuple[list[str], list[str]]:
         all_people = os.listdir(self.testset_dir)
         random.shuffle(all_people)
+        print(all_people)
+        quit()
 
         source_people = all_people[: int(len(all_people) / 2)]
         target_people = all_people[int(len(all_people) / 2) :]
@@ -1250,7 +1252,7 @@ class SimSwapDefense(nn.Module):
         source_path = [
             join(self.samples_dir, "zjl.jpg"),
             join(self.samples_dir, "6.jpg"),
-            join(self.samples_dir, "jl.jpg"),
+            join(self.samples_dir, "hzxc.jpg"),
         ]
         target_path = [
             join(self.samples_dir, "zrf.jpg"),
@@ -1352,7 +1354,7 @@ class SimSwapDefense(nn.Module):
         target_path = [
             join(self.samples_dir, "zjl.jpg"),
             join(self.samples_dir, "6.jpg"),
-            join(self.samples_dir, "jl.jpg"),
+            join(self.samples_dir, "hzxc.jpg"),
         ]
 
         source_imgs = self._load_imgs(source_path)
