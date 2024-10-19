@@ -70,6 +70,7 @@ def get_file_and_console_logger(args):
 def get_argparser():
     parser = argparse.ArgumentParser(description="Thwart DeepFake!")
     parser.add_argument("--log_level", type=int, default=2)
+    parser.add_argument("--log_interval", type=int, default=100)
     parser.add_argument("--method", type=str, required=True)
     parser.add_argument("--data_dir", type=str, default="crop_224")
     parser.add_argument("--random_seed", type=int, default=0)
