@@ -59,7 +59,7 @@ class SimSwapDefense(nn.Module):
         self.efficiency = Efficiency(None)
 
     def split_dataset(self) -> None:
-        all_people = os.listdir(self.dataset_dir)
+        all_people = sorted(os.listdir(self.dataset_dir))
         testset_people = random.sample(all_people, self.args.testset_people_count)
 
         os.makedirs(self.trainset_dir, exist_ok=True)
@@ -209,11 +209,11 @@ class SimSwapDefense(nn.Module):
 
     def calculate_efficiency_threshold(self) -> None:
         dataset_path = join(self.args.data_dir, "vggface2_crop_224")
-        all_people = os.listdir(dataset_path)
+        all_people = sorted(os.listdir(dataset_path))
         imgs_path = []
         for people in all_people:
             people_path = join(dataset_path, people)
-            all_imgs_name = os.listdir(people_path)
+            all_imgs_name = sorted(os.listdir(people_path))
             selected_imgs_name = random.sample(
                 all_imgs_name, min(self.args.metric_people_image, len(all_imgs_name))
             )
@@ -307,7 +307,7 @@ class SimSwapDefense(nn.Module):
         )
 
     def _get_random_imgs_path(self) -> tuple[list[str], list[str]]:
-        people = os.listdir(self.dataset_dir)
+        people = sorted(os.listdir(self.dataset_dir))
         random.shuffle(people)
 
         index = 0
@@ -315,10 +315,10 @@ class SimSwapDefense(nn.Module):
         selected_imgs_path = []
         while people_to_select > 0:
             people_to_select -= 1
-            imgs_path = os.listdir(join(self.dataset_dir, people[index]))
+            imgs_path = sorted(os.listdir(join(self.dataset_dir, people[index])))
             while len(imgs_path) < self.args.pgd_people_imgs:
                 index += 1
-                imgs_path = os.listdir(join(self.dataset_dir, people[index]))
+                imgs_path = sorted(os.listdir(join(self.dataset_dir, people[index])))
 
             selected_imgs_name = random.sample(imgs_path, self.args.pgd_people_imgs)
             selected_imgs_path.extend(
@@ -863,11 +863,11 @@ class SimSwapDefense(nn.Module):
 
     def _get_all_imgs_path(self, train_set: bool = True) -> list[str]:
         set_to_load = self.trainset_dir if train_set else self.testset_dir
-        all_people = os.listdir(set_to_load)
+        all_people = sorted(os.listdir(set_to_load))
         all_imgs_path = []
         for people in all_people:
             people_dir = join(set_to_load, people)
-            all_imgs_name = os.listdir(people_dir)
+            all_imgs_name = sorted(os.listdir(people_dir))
             all_imgs_path.extend(
                 [join(set_to_load, people, name) for name in all_imgs_name]
             )
@@ -1214,10 +1214,8 @@ class SimSwapDefense(nn.Module):
                 )
 
     def _get_split_test_imgs_path(self) -> tuple[list[str], list[str]]:
-        all_people = os.listdir(self.testset_dir)
+        all_people = sorted(os.listdir(self.testset_dir))
         random.shuffle(all_people)
-        print(all_people)
-        quit()
 
         source_people = all_people[: int(len(all_people) / 2)]
         target_people = all_people[int(len(all_people) / 2) :]
@@ -1225,7 +1223,7 @@ class SimSwapDefense(nn.Module):
         source_imgs_path = []
         for people in source_people:
             people_dir = join(self.testset_dir, people)
-            people_imgs_name = os.listdir(people_dir)
+            people_imgs_name = sorted(os.listdir(people_dir))
             source_imgs_path.extend(
                 [join(self.testset_dir, people, name) for name in people_imgs_name]
             )
@@ -1233,7 +1231,7 @@ class SimSwapDefense(nn.Module):
         target_imgs_path = []
         for people in target_people:
             people_dir = join(self.testset_dir, people)
-            people_imgs_name = os.listdir(people_dir)
+            people_imgs_name = sorted(os.listdir(people_dir))
             target_imgs_path.extend(
                 [join(self.testset_dir, people, name) for name in people_imgs_name]
             )
