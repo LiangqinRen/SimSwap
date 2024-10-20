@@ -60,7 +60,7 @@ class Efficiency:
                 if dist < 0.91906:
                     count += 1
 
-        return count / img1_cropped.shape[0]
+        return count / img1_cropped.shape[0], sum(dists) / len(dists)
 
     def detect_face(self, imgs1, imgs2):
         IMG1 = []

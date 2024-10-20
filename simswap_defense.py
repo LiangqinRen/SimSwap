@@ -349,6 +349,42 @@ class SimSwapDefense(nn.Module):
 
         return mse, psnr, ssim
 
+    def _calculate_distance(
+        self,
+        source_imgs: torch.tensor,
+        target_imgs: torch.tensor,
+        anchor_imgs: torch.tensor,
+        pert_imgs_swap: torch.tensor,
+    ) -> tuple[float, float, float]:
+        source_imgs_ndarray = (
+            source_imgs.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
+        )
+        target_imgs_ndarray = (
+            target_imgs.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
+        )
+        anchor_imgs_ndarray = (
+            anchor_imgs.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
+        )
+        pert_imgs_swap_ndarray = (
+            pert_imgs_swap.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
+        )
+
+        _, source_to_pert_swap_dist = self.efficiency.compare(
+            source_imgs_ndarray, pert_imgs_swap_ndarray
+        )
+        _, target_to_pert_swap_dist = self.efficiency.compare(
+            target_imgs_ndarray, pert_imgs_swap_ndarray
+        )
+        _, anchor_to_pert_swap_dist = self.efficiency.compare(
+            anchor_imgs_ndarray, pert_imgs_swap_ndarray
+        )
+
+        return (
+            source_to_pert_swap_dist,
+            target_to_pert_swap_dist,
+            anchor_to_pert_swap_dist,
+        )
+
     def _calculate_efficiency(
         self,
         source_imgs: torch.tensor,
@@ -604,6 +640,103 @@ class SimSwapDefense(nn.Module):
 
             self.logger.info(
                 f"Average of {self.args.gan_batch_size * (i + 1)} pictures: pert utility(mse, psnr, ssim): {sum(data['pert_mse'])/len(data['pert_mse']):.3f} {sum(data['pert_psnr'])/len(data['pert_psnr']):.3f} {sum(data['pert_ssim'])/len(data['pert_ssim']):.3f}, pert swap utility(mse, psnr, ssim): {sum(data['pert_swap_mse'])/len(data['pert_swap_mse']):.3f} {sum(data['pert_swap_psnr'])/len(data['pert_swap_psnr']):.3f} {sum(data['pert_swap_ssim'])/len(data['pert_swap_ssim']):.3f}, efficiency(pert, swap, pert swap, anchor): {sum(data['pert_efficiency'])/len(data['pert_efficiency']):.3f}, {sum(data['swap_efficiency'])/len(data['swap_efficiency']):.3f}, {sum(data['pert_swap_efficiency'])/len(data['pert_swap_efficiency']):.3f}, {sum(data['anchor_efficiency'])/len(data['anchor_efficiency']):.3f}"
+            )
+
+    def pgd_source_distance(self, loss_weights=[1, 1]):
+        self.logger.info(f"loss_weights: {loss_weights}")
+
+        self.target.cuda().eval()
+        l2_loss = nn.MSELoss().cuda()
+
+        source_imgs_path, target_imgs_path = self._get_split_test_imgs_path()
+        total_batch = (
+            min(len(source_imgs_path), len(target_imgs_path))
+            // self.args.pgd_batch_size
+        )
+        mimic_img = self._load_imgs([join(self.args.data_dir, self.args.pgd_mimic)])
+        mimic_img_expand = mimic_img.repeat(self.args.pgd_batch_size, 1, 1, 1)
+        mimic_identity_expand = self._get_imgs_identity(mimic_img_expand)
+
+        distance_between_pert_swap_to = {"source": [], "target": [], "anchor": []}
+        for i in range(total_batch):
+            iter_source_path = source_imgs_path[
+                i * self.args.pgd_batch_size : (i + 1) * self.args.pgd_batch_size
+            ]
+            iter_target_path = target_imgs_path[
+                i * self.args.pgd_batch_size : (i + 1) * self.args.pgd_batch_size
+            ]
+
+            source_imgs = self._load_imgs(iter_source_path)
+            target_imgs = self._load_imgs(iter_target_path)
+            source_identity = self._get_imgs_identity(source_imgs)
+            swap_imgs = self.target(None, target_imgs, source_identity, None, True)
+
+            x_imgs = source_imgs.clone().detach()
+            epsilon = (
+                self.args.pgd_epsilon
+                * (torch.max(source_imgs) - torch.min(source_imgs))
+                / 2
+            )
+
+            for epoch in range(self.args.pgd_epochs):
+                x_imgs.requires_grad = True
+
+                x_identity = torch.empty(self.args.pgd_batch_size, 512).cuda()
+                for j in range(self.args.pgd_batch_size):
+                    identity = self._get_imgs_identity(x_imgs[j].unsqueeze(0))
+                    x_identity[j] = identity[0]
+
+                pert_diff_loss = l2_loss(x_imgs, source_imgs.detach())
+                identity_diff_loss = l2_loss(x_identity, mimic_identity_expand.detach())
+
+                loss = (
+                    loss_weights[0] * pert_diff_loss
+                    + loss_weights[1] * identity_diff_loss
+                )
+                loss.backward()
+
+                x_imgs = x_imgs.clone().detach() + epsilon * x_imgs.grad.sign()
+                x_imgs = torch.clamp(
+                    x_imgs,
+                    min=source_imgs - self.args.pgd_limit,
+                    max=source_imgs + self.args.pgd_limit,
+                )
+
+                self.logger.info(
+                    f"Iter {i:5}/{total_batch:5}[Epoch {epoch+1:3}/{self.args.pgd_epochs:3}]loss: {loss:.5f}({loss_weights[0] * pert_diff_loss.item():.5f}, {loss_weights[1] * identity_diff_loss.item():.5f})"
+                )
+
+            x_identity = self._get_imgs_identity(x_imgs)
+            x_swap_img = self.target(None, target_imgs, x_identity, None, True)
+
+            (
+                source_to_pert_swap_dist,
+                target_to_pert_swap_dist,
+                anchor_to_pert_swap_dist,
+            ) = self._calculate_distance(
+                source_imgs, target_imgs, mimic_img_expand, x_swap_img
+            )
+            distance_between_pert_swap_to["source"].append(source_to_pert_swap_dist)
+            distance_between_pert_swap_to["target"].append(target_to_pert_swap_dist)
+            distance_between_pert_swap_to["anchor"].append(anchor_to_pert_swap_dist)
+
+            if i % self.args.log_interval == 0:
+                results = torch.cat(
+                    (source_imgs, target_imgs, swap_imgs, x_imgs, x_swap_img), dim=0
+                )
+                save_path = join(self.args.log_dir, "image", f"pgd_source_{i}.png")
+                save_image(results, save_path, nrow=self.args.pgd_batch_size)
+                del results
+
+            del x_imgs, x_identity, x_swap_img
+            torch.cuda.empty_cache()
+
+            self.logger.info(
+                f"Iter {i:5}/{total_batch:5}, Distance (pert swap to source, target, anchor): {source_to_pert_swap_dist:.5f}, {target_to_pert_swap_dist:.5f}, {anchor_to_pert_swap_dist:.5f}"
+            )
+
+            self.logger.info(
+                f"Average distance of {self.args.gan_batch_size * (i + 1)} pictures (pert swap to source, target, anchor): {sum(distance_between_pert_swap_to['source'])/len(distance_between_pert_swap_to['source']):.5f}, {sum(distance_between_pert_swap_to['target'])/len(distance_between_pert_swap_to['target']):.5f}, {sum(distance_between_pert_swap_to['anchor'])/len(distance_between_pert_swap_to['anchor']):.5f}"
             )
 
     def pgd_target_single(self, loss_weights=[100, 1]) -> None:
