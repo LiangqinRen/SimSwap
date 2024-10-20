@@ -657,6 +657,7 @@ class SimSwapDefense(nn.Module):
         mimic_img_expand = mimic_img.repeat(self.args.pgd_batch_size, 1, 1, 1)
         mimic_identity_expand = self._get_imgs_identity(mimic_img_expand)
 
+        distance_between_swap_to = {"source": [], "target": [], "anchor": []}
         distance_between_pert_swap_to = {"source": [], "target": [], "anchor": []}
         for i in range(total_batch):
             iter_source_path = source_imgs_path[
@@ -710,6 +711,16 @@ class SimSwapDefense(nn.Module):
             x_swap_img = self.target(None, target_imgs, x_identity, None, True)
 
             (
+                source_to_swap_dist,
+                target_to_swap_dist,
+                anchor_to_swap_dist,
+            ) = self._calculate_distance(
+                source_imgs, target_imgs, mimic_img_expand, swap_imgs
+            )
+            distance_between_swap_to["source"].append(source_to_swap_dist)
+            distance_between_swap_to["target"].append(target_to_swap_dist)
+            distance_between_swap_to["anchor"].append(anchor_to_swap_dist)
+            (
                 source_to_pert_swap_dist,
                 target_to_pert_swap_dist,
                 anchor_to_pert_swap_dist,
@@ -732,11 +743,11 @@ class SimSwapDefense(nn.Module):
             torch.cuda.empty_cache()
 
             self.logger.info(
-                f"Iter {i:5}/{total_batch:5}, Distance (pert swap to source, target, anchor): {source_to_pert_swap_dist:.5f}, {target_to_pert_swap_dist:.5f}, {anchor_to_pert_swap_dist:.5f}"
+                f"Iter {i:5}/{total_batch:5}, Distance (swap to source, target, anchor): {source_to_swap_dist:.5f}, {target_to_swap_dist:.5f}, {anchor_to_swap_dist:.5f}, (pert swap to source, target, anchor): {source_to_pert_swap_dist:.5f}, {target_to_pert_swap_dist:.5f}, {anchor_to_pert_swap_dist:.5f}"
             )
 
             self.logger.info(
-                f"Average distance of {self.args.gan_batch_size * (i + 1)} pictures (pert swap to source, target, anchor): {sum(distance_between_pert_swap_to['source'])/len(distance_between_pert_swap_to['source']):.5f}, {sum(distance_between_pert_swap_to['target'])/len(distance_between_pert_swap_to['target']):.5f}, {sum(distance_between_pert_swap_to['anchor'])/len(distance_between_pert_swap_to['anchor']):.5f}"
+                f"Average distance of {self.args.gan_batch_size * (i + 1)} pictures (swap to source, target, anchor): {sum(distance_between_swap_to['source'])/len(distance_between_swap_to['source']):.5f}, {sum(distance_between_swap_to['target'])/len(distance_between_swap_to['target']):.5f}, {sum(distance_between_swap_to['anchor'])/len(distance_between_swap_to['anchor']):.5f}, (pert swap to source, target, anchor): {sum(distance_between_pert_swap_to['source'])/len(distance_between_pert_swap_to['source']):.5f}, {sum(distance_between_pert_swap_to['target'])/len(distance_between_pert_swap_to['target']):.5f}, {sum(distance_between_pert_swap_to['anchor'])/len(distance_between_pert_swap_to['anchor']):.5f}"
             )
 
     def pgd_target_single(self, loss_weights=[100, 1]) -> None:
