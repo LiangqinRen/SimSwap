@@ -393,7 +393,7 @@ class SimSwapDefense(nn.Module):
         clean_imgs_swap: torch.tensor,
         pert_imgs_swap: torch.tensor,
         anchor_imgs: torch.tensor = None,
-    ) -> tuple[float, float]:
+    ):
         source_imgs_ndarray = (
             source_imgs.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
         )
@@ -408,22 +408,24 @@ class SimSwapDefense(nn.Module):
         ) * 255.0
 
         if target_imgs is None:
-            pert = self.efficiency.compare(source_imgs_ndarray, pert_imgs_ndarray)
+            pert, _ = self.efficiency.compare(source_imgs_ndarray, pert_imgs_ndarray)
         else:
             target_imgs_ndarray = (
                 target_imgs.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
             )
-            pert = self.efficiency.compare(target_imgs_ndarray, pert_imgs_ndarray)
-        clean_swap = self.efficiency.compare(
+            pert, _ = self.efficiency.compare(target_imgs_ndarray, pert_imgs_ndarray)
+        clean_swap, _ = self.efficiency.compare(
             source_imgs_ndarray, clean_imgs_swap_ndarray
         )
-        pert_swap = self.efficiency.compare(source_imgs_ndarray, pert_imgs_swap_ndarray)
+        pert_swap, _ = self.efficiency.compare(
+            source_imgs_ndarray, pert_imgs_swap_ndarray
+        )
 
         if anchor_imgs is not None:
             anchor_imgs_ndarray = (
                 anchor_imgs.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
             )
-            anchor = self.efficiency.compare(
+            anchor, _ = self.efficiency.compare(
                 anchor_imgs_ndarray, pert_imgs_swap_ndarray
             )
             return pert, clean_swap, pert_swap, anchor
@@ -475,7 +477,7 @@ class SimSwapDefense(nn.Module):
                 )
                 loss.backward()
 
-                x_imgs = x_imgs.clone().detach() + epsilon * x_imgs.grad.sign()
+                x_imgs = x_imgs.clone().detach() - epsilon * x_imgs.grad.sign()
                 x_imgs = torch.clamp(
                     x_imgs,
                     min=src_imgs - self.args.pgd_limit,
@@ -582,7 +584,7 @@ class SimSwapDefense(nn.Module):
                 )
                 loss.backward()
 
-                x_imgs = x_imgs.clone().detach() + epsilon * x_imgs.grad.sign()
+                x_imgs = x_imgs.clone().detach() - epsilon * x_imgs.grad.sign()
                 x_imgs = torch.clamp(
                     x_imgs,
                     min=source_imgs - self.args.pgd_limit,
@@ -635,7 +637,7 @@ class SimSwapDefense(nn.Module):
             torch.cuda.empty_cache()
 
             self.logger.info(
-                f"Iter {i:5}/{total_batch:5}, pert utility(mse, psnr, ssim): {pert_mse:.3f} {pert_psnr:.3f} {pert_ssim:.3f}, pert swap utility(mse, psnr, ssim): {pert_swap_mse:.3f} {pert_swap_psnr:.3f} {pert_swap_ssim:.3f}, efficiency (pert, clean swap, pert swap, anchor): {pert_efficiency:.3f}, {swap_efficiency:.3f}, {pert_swap_efficiency:.3f}, {anchor_efficiency:.3f}"
+                f"Iter {i:5}/{total_batch:5}, pert utility(mse, psnr, ssim): {pert_mse:.3f}, {pert_psnr:.3f}, {pert_ssim:.3f}, pert swap utility(mse, psnr, ssim): {pert_swap_mse:.3f}, {pert_swap_psnr:.3f}, {pert_swap_ssim:.3f}, efficiency (pert, clean swap, pert swap, anchor): {pert_efficiency:.3f}, {swap_efficiency:.3f}, {pert_swap_efficiency:.3f}, {anchor_efficiency:.3f}"
             )
 
             self.logger.info(
@@ -696,7 +698,7 @@ class SimSwapDefense(nn.Module):
                 )
                 loss.backward()
 
-                x_imgs = x_imgs.clone().detach() + epsilon * x_imgs.grad.sign()
+                x_imgs = x_imgs.clone().detach() - epsilon * x_imgs.grad.sign()
                 x_imgs = torch.clamp(
                     x_imgs,
                     min=source_imgs - self.args.pgd_limit,
