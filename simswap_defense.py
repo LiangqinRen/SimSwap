@@ -308,6 +308,21 @@ class SimSwapDefense(nn.Module):
             ]
         )
 
+        (
+            source_to_swap_dist,
+            target_to_swap_dist,
+            anchor_to_swap_dist,
+        ) = self._calculate_distance(source_img, target_img, mimic_img, source_swap_img)
+        (
+            source_to_pert_swap_dist,
+            target_to_pert_swap_dist,
+            anchor_to_pert_swap_dist,
+        ) = self._calculate_distance(source_img, target_img, mimic_img, x_swap_img)
+
+        self.logger.info(
+            f"Distance (swap to source, target, anchor): {source_to_swap_dist:.5f}, {target_to_swap_dist:.5f}, {anchor_to_swap_dist:.5f}, (pert swap to source, target, anchor): {source_to_pert_swap_dist:.5f}, {target_to_pert_swap_dist:.5f}, {anchor_to_pert_swap_dist:.5f}"
+        )
+
     def _get_random_imgs_path(self) -> tuple[list[str], list[str]]:
         people = sorted(os.listdir(self.dataset_dir))
         random.shuffle(people)
