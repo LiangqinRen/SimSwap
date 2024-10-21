@@ -276,7 +276,9 @@ class SimSwapDefense(nn.Module):
 
             loss.backward(retain_graph=True)
 
-            x_img = x_img.clone().detach() + epsilon * x_img.grad.sign()
+            x_img = (
+                x_img.clone().detach() - epsilon * x_img.grad.sign().clone().detach()
+            )
             x_img = torch.clamp(
                 x_img,
                 min=x_backup - self.args.pgd_limit,
@@ -477,7 +479,10 @@ class SimSwapDefense(nn.Module):
                 )
                 loss.backward()
 
-                x_imgs = x_imgs.clone().detach() - epsilon * x_imgs.grad.sign()
+                x_imgs = (
+                    x_imgs.clone().detach()
+                    - epsilon * x_imgs.grad.sign().clone().detach()
+                )
                 x_imgs = torch.clamp(
                     x_imgs,
                     min=src_imgs - self.args.pgd_limit,
@@ -574,6 +579,7 @@ class SimSwapDefense(nn.Module):
                 for j in range(self.args.pgd_batch_size):
                     identity = self._get_imgs_identity(x_imgs[j].unsqueeze(0))
                     x_identity[j] = identity[0]
+                    del identity
 
                 pert_diff_loss = l2_loss(x_imgs, source_imgs.detach())
                 identity_diff_loss = l2_loss(x_identity, mimic_identity_expand.detach())
@@ -584,7 +590,10 @@ class SimSwapDefense(nn.Module):
                 )
                 loss.backward()
 
-                x_imgs = x_imgs.clone().detach() - epsilon * x_imgs.grad.sign()
+                x_imgs = (
+                    x_imgs.clone().detach()
+                    - epsilon * x_imgs.grad.sign().clone().detach()
+                )
                 x_imgs = torch.clamp(
                     x_imgs,
                     min=source_imgs - self.args.pgd_limit,
@@ -633,6 +642,7 @@ class SimSwapDefense(nn.Module):
                 save_image(results, save_path, nrow=self.args.pgd_batch_size)
                 del results
 
+            del source_imgs, target_imgs, source_identity, swap_imgs
             del x_imgs, x_identity, x_swap_img
             torch.cuda.empty_cache()
 
@@ -698,7 +708,10 @@ class SimSwapDefense(nn.Module):
                 )
                 loss.backward()
 
-                x_imgs = x_imgs.clone().detach() - epsilon * x_imgs.grad.sign()
+                x_imgs = (
+                    x_imgs.clone().detach()
+                    - epsilon * x_imgs.grad.sign().clone().detach()
+                )
                 x_imgs = torch.clamp(
                     x_imgs,
                     min=source_imgs - self.args.pgd_limit,
