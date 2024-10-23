@@ -30,7 +30,7 @@ class Utility:
         return np.mean(MSE), np.mean(PSNR), np.mean(SSIM)
 
 
-class Efficiency:
+class Effectiveness:
     def __init__(self, opt):
         self.mtcnn = MTCNN(
             image_size=160,
@@ -115,7 +115,7 @@ class Evaluate:
         self.logger = logger
 
         self.utility = Utility()
-        self.efficiency = Efficiency(None)
+        self.efficiency = Effectiveness(None)
 
     def _load_images(self, dir: str):
         imgs_dir = os.path.join(self.args.data_dir, dir)

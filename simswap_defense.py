@@ -22,7 +22,7 @@ from models.models import create_model
 from models.fs_networks import Generator
 from tqdm import tqdm
 
-from evaluate import Utility, Efficiency, Evaluate
+from evaluate import Utility, Effectiveness, Evaluate
 
 
 class SimSwapDefense(nn.Module):
@@ -56,7 +56,7 @@ class SimSwapDefense(nn.Module):
         self.GAN_G = Generator(input_nc=3, output_nc=3, epsilon=self.gan_rgb_limits)
 
         self.utility = Utility()
-        self.efficiency = Efficiency(None)
+        self.effectiveness = Effectiveness(None)
 
     def split_dataset(self) -> None:
         all_people = sorted(os.listdir(self.dataset_dir))
@@ -207,7 +207,7 @@ class SimSwapDefense(nn.Module):
 
         self._save_imgs([source_img, target_img, swap_img])
 
-    def calculate_efficiency_threshold(self) -> None:
+    def calculate_effectiveness_threshold(self) -> None:
         dataset_path = join(self.args.data_dir, "vggface2_crop_224")
         all_people = sorted(os.listdir(dataset_path))
         imgs_path = []
@@ -228,7 +228,7 @@ class SimSwapDefense(nn.Module):
             target_img = self._load_imgs([path])
             swap_img = self.target(None, target_img, source_identity, None, True)
 
-            difference = self.efficiency.get_image_difference(source_img, swap_img)
+            difference = self.effectiveness.get_image_difference(source_img, swap_img)
             if math.isinf(difference):
                 continue
 
@@ -247,40 +247,80 @@ class SimSwapDefense(nn.Module):
             f"With {len(differences)} pictures, the max, mean, min differences are {max_difference:.5f}, {sum_difference/len(differences):.5f} and {min_difference:.5f}"
         )
 
-    def pgd_source_single(self, loss_weights=[1, 1]):
+    def __save_pgd_samples(self, imgs: list[torch.tensor]) -> None:
+        img_names = [
+            "source",
+            "target",
+            "swap",
+            "mimic",
+            "mimic_swap",
+            "pert",
+            "pert_swap",
+        ]
+
+        for i, name in enumerate(img_names):
+            for j in range(imgs[i].shape[0]):
+                save_image(
+                    imgs[i][j], join(self.args.log_dir, "image", f"{name}_{j}.png")
+                )
+
+        results = torch.cat(imgs, dim=0)
+        save_image(
+            results,
+            join(self.args.log_dir, "image", f"summary.png"),
+            nrow=imgs[0].shape[0],
+        )
+        del results
+
+    def pgd_source_sample(self, loss_weights=[1, 1]):
         self.logger.info(f"loss_weights: {loss_weights}")
 
         self.target.cuda().eval()
         l2_loss = nn.MSELoss().cuda()
 
-        source_img = self._load_imgs([join(self.args.data_dir, self.args.pgd_source)])
+        source_path = [
+            join(self.samples_dir, "zjl.jpg"),
+            join(self.samples_dir, "6.jpg"),
+            join(self.samples_dir, "hzxc.jpg"),
+        ]
+        target_path = [
+            join(self.samples_dir, "zrf.jpg"),
+            join(self.samples_dir, "zrf.jpg"),
+            join(self.samples_dir, "zrf.jpg"),
+        ]
+
+        source_imgs = self._load_imgs(source_path)
+        target_imgs = self._load_imgs(target_path)
+        source_identity = self._get_imgs_identity(source_imgs)
+
         mimic_img = self._load_imgs([join(self.args.data_dir, self.args.pgd_mimic)])
+        mimic_img_expand = mimic_img.repeat(len(source_path), 1, 1, 1)
+        mimic_identity_expand = self._get_imgs_identity(mimic_img_expand)
 
-        source_identity = self._get_imgs_identity(source_img)
-        mimic_identity = self._get_imgs_identity(mimic_img)
-
-        x_img = source_img.clone().detach()
-        x_backup = source_img.clone().detach()
+        x_imgs = source_imgs.clone().detach()
+        x_backup = source_imgs.clone().detach()
         epsilon = (
-            self.args.pgd_epsilon * (torch.max(source_img) - torch.min(source_img)) / 2
+            self.args.pgd_epsilon
+            * (torch.max(source_imgs) - torch.min(source_imgs))
+            / 2
         )
         for iter in range(self.args.epochs):
-            x_img.requires_grad = True
+            x_imgs.requires_grad = True
 
-            x_identity = self._get_imgs_identity(x_img)
-            pert_diff_loss = l2_loss(x_img, x_backup.detach())
-            identity_diff_loss = l2_loss(x_identity, mimic_identity.detach())
+            x_identity = self._get_imgs_identity(x_imgs)
+            pert_diff_loss = l2_loss(x_imgs, x_backup.detach())
+            identity_diff_loss = l2_loss(x_identity, mimic_identity_expand.detach())
             loss = (
                 loss_weights[0] * pert_diff_loss + loss_weights[1] * identity_diff_loss
             )
 
             loss.backward(retain_graph=True)
 
-            x_img = (
-                x_img.clone().detach() - epsilon * x_img.grad.sign().clone().detach()
+            x_imgs = (
+                x_imgs.clone().detach() - epsilon * x_imgs.grad.sign().clone().detach()
             )
-            x_img = torch.clamp(
-                x_img,
+            x_imgs = torch.clamp(
+                x_imgs,
                 min=x_backup - self.args.pgd_limit,
                 max=x_backup + self.args.pgd_limit,
             )
@@ -288,39 +328,46 @@ class SimSwapDefense(nn.Module):
                 f"[Iter {iter:4}]loss: {loss:.5f}({loss_weights[0] * pert_diff_loss.item():.5f}, {loss_weights[1] * identity_diff_loss.item():.5f})"
             )
 
-        target_img = self._load_imgs([join(self.args.data_dir, self.args.pgd_target)])
+        source_swap_imgs = self.target(None, target_imgs, source_identity, None, True)
+        mimic_swap_imgs = self.target(
+            None, target_imgs, mimic_identity_expand, None, True
+        )
 
-        source_swap_img = self.target(None, target_img, source_identity, None, True)
-        mimic_swap_img = self.target(None, target_img, mimic_identity, None, True)
+        x_identity = self._get_imgs_identity(x_imgs).detach()
+        x_swap_imgs = self.target(None, target_imgs, x_identity, None, True)
 
-        x_identity = self._get_imgs_identity(x_img).detach()
-        x_swap_img = self.target(None, target_img, x_identity, None, True)
-
-        self._save_imgs(
+        self.__save_pgd_samples(
             [
-                source_img,
-                target_img,
-                source_swap_img,
-                mimic_img,
-                mimic_swap_img,
-                x_img,
-                x_swap_img,
+                source_imgs,
+                target_imgs,
+                source_swap_imgs,
+                mimic_img_expand,
+                mimic_swap_imgs,
+                x_imgs,
+                x_swap_imgs,
             ]
         )
 
+        pert_mse, pert_psnr, pert_ssim = self._calculate_utility(source_imgs, x_imgs)
+        pert_swap_mse, pert_swap_psnr, pert_swap_ssim = self._calculate_utility(
+            source_swap_imgs, x_swap_imgs
+        )
         (
-            source_to_swap_dist,
-            target_to_swap_dist,
-            anchor_to_swap_dist,
-        ) = self._calculate_distance(source_img, target_img, mimic_img, source_swap_img)
-        (
-            source_to_pert_swap_dist,
-            target_to_pert_swap_dist,
-            anchor_to_pert_swap_dist,
-        ) = self._calculate_distance(source_img, target_img, mimic_img, x_swap_img)
+            pert_effectiveness,
+            swap_effectiveness,
+            pert_swap_effectiveness,
+            anchor_effectiveness,
+        ) = self._calculate_effectiveness(
+            source_imgs,
+            None,
+            x_imgs,
+            source_swap_imgs,
+            x_swap_imgs,
+            mimic_img_expand,
+        )
 
         self.logger.info(
-            f"Distance (swap to source, target, anchor): {source_to_swap_dist:.5f}, {target_to_swap_dist:.5f}, {anchor_to_swap_dist:.5f}, (pert swap to source, target, anchor): {source_to_pert_swap_dist:.5f}, {target_to_pert_swap_dist:.5f}, {anchor_to_pert_swap_dist:.5f}"
+            f"pert(mse, psnr, ssim): ({pert_mse:.5f}, {pert_psnr:.5f}, {pert_ssim:.5f}). pert swap(mse, psnr, ssim): ({pert_swap_mse:.5f}, {pert_swap_psnr:.5f}, {pert_swap_ssim:.5f}). effectiveness(pert, swap, pert swap, anchor): ({pert_effectiveness:.5f}, {swap_effectiveness:.5f}, {pert_swap_effectiveness:.5f}, {anchor_effectiveness:.5f})"
         )
 
     def _get_random_imgs_path(self) -> tuple[list[str], list[str]]:
@@ -386,13 +433,13 @@ class SimSwapDefense(nn.Module):
             pert_imgs_swap.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
         )
 
-        _, source_to_pert_swap_dist = self.efficiency.compare(
+        _, source_to_pert_swap_dist = self.effectiveness.compare(
             source_imgs_ndarray, pert_imgs_swap_ndarray
         )
-        _, target_to_pert_swap_dist = self.efficiency.compare(
+        _, target_to_pert_swap_dist = self.effectiveness.compare(
             target_imgs_ndarray, pert_imgs_swap_ndarray
         )
-        _, anchor_to_pert_swap_dist = self.efficiency.compare(
+        _, anchor_to_pert_swap_dist = self.effectiveness.compare(
             anchor_imgs_ndarray, pert_imgs_swap_ndarray
         )
 
@@ -402,7 +449,7 @@ class SimSwapDefense(nn.Module):
             anchor_to_pert_swap_dist,
         )
 
-    def _calculate_efficiency(
+    def _calculate_effectiveness(
         self,
         source_imgs: torch.tensor,
         target_imgs: torch.tensor,
@@ -425,16 +472,16 @@ class SimSwapDefense(nn.Module):
         ) * 255.0
 
         if target_imgs is None:
-            pert, _ = self.efficiency.compare(source_imgs_ndarray, pert_imgs_ndarray)
+            pert, _ = self.effectiveness.compare(source_imgs_ndarray, pert_imgs_ndarray)
         else:
             target_imgs_ndarray = (
                 target_imgs.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
             )
-            pert, _ = self.efficiency.compare(target_imgs_ndarray, pert_imgs_ndarray)
-        clean_swap, _ = self.efficiency.compare(
+            pert, _ = self.effectiveness.compare(target_imgs_ndarray, pert_imgs_ndarray)
+        clean_swap, _ = self.effectiveness.compare(
             source_imgs_ndarray, clean_imgs_swap_ndarray
         )
-        pert_swap, _ = self.efficiency.compare(
+        pert_swap, _ = self.effectiveness.compare(
             source_imgs_ndarray, pert_imgs_swap_ndarray
         )
 
@@ -442,14 +489,14 @@ class SimSwapDefense(nn.Module):
             anchor_imgs_ndarray = (
                 anchor_imgs.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
             )
-            anchor, _ = self.efficiency.compare(
+            anchor, _ = self.effectiveness.compare(
                 anchor_imgs_ndarray, pert_imgs_swap_ndarray
             )
             return pert, clean_swap, pert_swap, anchor
 
         return pert, clean_swap, pert_swap
 
-    def pgd_source_multiple(self, loss_weights=[1, 1]):
+    def pgd_source_multiple(self, loss_weights=[1, 3]):
         self.logger.info(f"loss_weights: {loss_weights}")
 
         self.target.cuda().eval()
@@ -524,22 +571,22 @@ class SimSwapDefense(nn.Module):
             utility = self._calculate_utility(src_imgs, x_imgs)
             utilities.append(utility)
 
-            source_clean_swap, source_pert_swap = self._calculate_efficiency(
+            source_clean_swap, source_pert_swap = self._calculate_effectiveness(
                 src_imgs, src_swap_imgs, x_swap_img
             )
             efficiencies.append((source_clean_swap, source_pert_swap))
 
             self.logger.info(
-                f"[Batch {batch_index+1:3}/{self.args.pgd_metric_people:3}]utility: {utility:.3f}, efficiency: {source_clean_swap:.3f}, {source_pert_swap:.3f}"
+                f"[Batch {batch_index+1:3}/{self.args.pgd_metric_people:3}]utility: {utility:.3f}, effectiveness: {source_clean_swap:.3f}, {source_pert_swap:.3f}"
             )
 
             path_index += batch_size
 
         self.logger.info(
-            f"Utility: {np.mean(utilities)}, Efficiency: {sum(v[0] for v in efficiencies) / len(efficiencies):.5f},{sum(v[1] for v in efficiencies) / len(efficiencies):.5f}"
+            f"Utility: {np.mean(utilities)}, effectiveness: {sum(v[0] for v in efficiencies) / len(efficiencies):.5f},{sum(v[1] for v in efficiencies) / len(efficiencies):.5f}"
         )
 
-    def pgd_source_metric(self, loss_weights=[1, 1]):
+    def pgd_source_metric(self, loss_weights=[1,1]):
         self.logger.info(f"loss_weights: {loss_weights}")
 
         self.target.cuda().eval()
@@ -553,10 +600,10 @@ class SimSwapDefense(nn.Module):
             "pert_swap_mse": [],
             "pert_swap_psnr": [],
             "pert_swap_ssim": [],
-            "pert_efficiency": [],
-            "swap_efficiency": [],
-            "pert_swap_efficiency": [],
-            "anchor_efficiency": [],
+            "pert_effectiveness": [],
+            "swap_effectiveness": [],
+            "pert_swap_effectiveness": [],
+            "anchor_effectiveness": [],
         }
 
         total_batch = (
@@ -636,17 +683,17 @@ class SimSwapDefense(nn.Module):
             data["pert_swap_ssim"].append(pert_swap_ssim)
 
             (
-                pert_efficiency,
-                swap_efficiency,
-                pert_swap_efficiency,
-                anchor_efficiency,
-            ) = self._calculate_efficiency(
+                pert_effectiveness,
+                swap_effectiveness,
+                pert_swap_effectiveness,
+                anchor_effectiveness,
+            ) = self._calculate_effectiveness(
                 source_imgs, None, x_imgs, swap_imgs, x_swap_img, mimic_img_expand
             )
-            data["pert_efficiency"].append(pert_efficiency)
-            data["swap_efficiency"].append(swap_efficiency)
-            data["pert_swap_efficiency"].append(pert_swap_efficiency)
-            data["anchor_efficiency"].append(anchor_efficiency)
+            data["pert_effectiveness"].append(pert_effectiveness)
+            data["swap_effectiveness"].append(swap_effectiveness)
+            data["pert_swap_effectiveness"].append(pert_swap_effectiveness)
+            data["anchor_effectiveness"].append(anchor_effectiveness)
 
             if i % self.args.log_interval == 0:
                 results = torch.cat(
@@ -661,11 +708,11 @@ class SimSwapDefense(nn.Module):
             torch.cuda.empty_cache()
 
             self.logger.info(
-                f"Iter {i:5}/{total_batch:5}, pert utility(mse, psnr, ssim): {pert_mse:.3f}, {pert_psnr:.3f}, {pert_ssim:.3f}, pert swap utility(mse, psnr, ssim): {pert_swap_mse:.3f}, {pert_swap_psnr:.3f}, {pert_swap_ssim:.3f}, efficiency (pert, clean swap, pert swap, anchor): {pert_efficiency:.3f}, {swap_efficiency:.3f}, {pert_swap_efficiency:.3f}, {anchor_efficiency:.3f}"
+                f"Iter {i:5}/{total_batch:5}, pert utility(mse, psnr, ssim): {pert_mse:.3f}, {pert_psnr:.3f}, {pert_ssim:.3f}, pert swap utility(mse, psnr, ssim): {pert_swap_mse:.3f}, {pert_swap_psnr:.3f}, {pert_swap_ssim:.3f}, effectiveness (pert, clean swap, pert swap, anchor): {pert_effectiveness:.3f}, {swap_effectiveness:.3f}, {pert_swap_effectiveness:.3f}, {anchor_effectiveness:.3f}"
             )
 
             self.logger.info(
-                f"Average of {self.args.batch_size * (i + 1)} pictures: pert utility(mse, psnr, ssim): {sum(data['pert_mse'])/len(data['pert_mse']):.3f} {sum(data['pert_psnr'])/len(data['pert_psnr']):.3f} {sum(data['pert_ssim'])/len(data['pert_ssim']):.3f}, pert swap utility(mse, psnr, ssim): {sum(data['pert_swap_mse'])/len(data['pert_swap_mse']):.3f} {sum(data['pert_swap_psnr'])/len(data['pert_swap_psnr']):.3f} {sum(data['pert_swap_ssim'])/len(data['pert_swap_ssim']):.3f}, efficiency(pert, swap, pert swap, anchor): {sum(data['pert_efficiency'])/len(data['pert_efficiency']):.3f}, {sum(data['swap_efficiency'])/len(data['swap_efficiency']):.3f}, {sum(data['pert_swap_efficiency'])/len(data['pert_swap_efficiency']):.3f}, {sum(data['anchor_efficiency'])/len(data['anchor_efficiency']):.3f}"
+                f"Average of {self.args.batch_size * (i + 1)} pictures: pert utility(mse, psnr, ssim): {sum(data['pert_mse'])/len(data['pert_mse']):.3f} {sum(data['pert_psnr'])/len(data['pert_psnr']):.3f} {sum(data['pert_ssim'])/len(data['pert_ssim']):.3f}, pert swap utility(mse, psnr, ssim): {sum(data['pert_swap_mse'])/len(data['pert_swap_mse']):.3f} {sum(data['pert_swap_psnr'])/len(data['pert_swap_psnr']):.3f} {sum(data['pert_swap_ssim'])/len(data['pert_swap_ssim']):.3f}, effectiveness(pert, swap, pert swap, anchor): {sum(data['pert_effectiveness'])/len(data['pert_effectiveness']):.3f}, {sum(data['swap_effectiveness'])/len(data['swap_effectiveness']):.3f}, {sum(data['pert_swap_effectiveness'])/len(data['pert_swap_effectiveness']):.3f}, {sum(data['anchor_effectiveness'])/len(data['anchor_effectiveness']):.3f}"
             )
 
     def pgd_source_distance(self, loss_weights=[1, 1]):
@@ -906,18 +953,18 @@ class SimSwapDefense(nn.Module):
             utility = self._calculate_utility(tgt_imgs, x_imgs)
             utilities.append(utility)
 
-            source_clean_swap, source_pert_swap = self._calculate_efficiency(
+            source_clean_swap, source_pert_swap = self._calculate_effectiveness(
                 src_imgs, source_swap_img, x_swap_img
             )
             efficiencies.append((source_clean_swap, source_pert_swap))
 
             self.logger.info(
-                f"[Batch {batch_index+1:3}/{self.args.pgd_metric_people:3}]utility: {utility:.3f}, efficiency: {source_clean_swap:.3f}, {source_pert_swap:.3f}"
+                f"[Batch {batch_index+1:3}/{self.args.pgd_metric_people:3}]utility: {utility:.3f}, effectiveness: {source_clean_swap:.3f}, {source_pert_swap:.3f}"
             )
             path_index += batch_size
 
         self.logger.info(
-            f"Utility: {np.mean(utilities)}, Efficiency: {sum(v[0] for v in efficiencies) / len(efficiencies):.5f},{sum(v[1] for v in efficiencies) / len(efficiencies):.5f}"
+            f"Utility: {np.mean(utilities)}, effectiveness: {sum(v[0] for v in efficiencies) / len(efficiencies):.5f},{sum(v[1] for v in efficiencies) / len(efficiencies):.5f}"
         )
 
     def pgd_target_metric(self, loss_weights=[100, 1]):
@@ -934,9 +981,9 @@ class SimSwapDefense(nn.Module):
             "pert_swap_mse": [],
             "pert_swap_psnr": [],
             "pert_swap_ssim": [],
-            "pert_efficiency": [],
-            "swap_efficiency": [],
-            "pert_swap_efficiency": [],
+            "pert_effectiveness": [],
+            "swap_effectiveness": [],
+            "pert_swap_effectiveness": [],
         }
 
         total_batch = (
@@ -1006,14 +1053,14 @@ class SimSwapDefense(nn.Module):
             data["pert_swap_psnr"].append(pert_swap_psnr)
             data["pert_swap_ssim"].append(pert_swap_ssim)
 
-            (pert_efficiency, swap_efficiency, pert_swap_efficiency) = (
-                self._calculate_efficiency(
+            (pert_effectiveness, swap_effectiveness, pert_swap_effectiveness) = (
+                self._calculate_effectiveness(
                     source_imgs, target_imgs, x_imgs, swap_imgs, x_swap_img
                 )
             )
-            data["pert_efficiency"].append(pert_efficiency)
-            data["swap_efficiency"].append(swap_efficiency)
-            data["pert_swap_efficiency"].append(pert_swap_efficiency)
+            data["pert_effectiveness"].append(pert_effectiveness)
+            data["swap_effectiveness"].append(swap_effectiveness)
+            data["pert_swap_effectiveness"].append(pert_swap_effectiveness)
 
             if i % self.args.log_interval == 0:
                 results = torch.cat(
@@ -1027,11 +1074,11 @@ class SimSwapDefense(nn.Module):
             torch.cuda.empty_cache()
 
             self.logger.info(
-                f"Iter {i:5}/{total_batch:5}, pert utility(mse, psnr, ssim): {pert_mse:.3f} {pert_psnr:.3f} {pert_ssim:.3f}, pert swap utility(mse, psnr, ssim): {pert_swap_mse:.3f} {pert_swap_psnr:.3f} {pert_swap_ssim:.3f}, efficiency (pert, clean swap, pert swap): {pert_efficiency:.3f}, {swap_efficiency:.3f}, {pert_swap_efficiency:.3f}"
+                f"Iter {i:5}/{total_batch:5}, pert utility(mse, psnr, ssim): {pert_mse:.3f} {pert_psnr:.3f} {pert_ssim:.3f}, pert swap utility(mse, psnr, ssim): {pert_swap_mse:.3f} {pert_swap_psnr:.3f} {pert_swap_ssim:.3f}, effectiveness (pert, clean swap, pert swap): {pert_effectiveness:.3f}, {swap_effectiveness:.3f}, {pert_swap_effectiveness:.3f}"
             )
 
             self.logger.info(
-                f"Average of {self.args.batch_size * (i + 1)} pictures: pert utility(mse, psnr, ssim): {sum(data['pert_mse'])/len(data['pert_mse']):.3f} {sum(data['pert_psnr'])/len(data['pert_psnr']):.3f} {sum(data['pert_ssim'])/len(data['pert_ssim']):.3f}, pert swap utility(mse, psnr, ssim): {sum(data['pert_swap_mse'])/len(data['pert_swap_mse']):.3f} {sum(data['pert_swap_psnr'])/len(data['pert_swap_psnr']):.3f} {sum(data['pert_swap_ssim'])/len(data['pert_swap_ssim']):.3f}, efficiency(pert, swap, pert swap): {sum(data['pert_efficiency'])/len(data['pert_efficiency']):.3f}, {sum(data['swap_efficiency'])/len(data['swap_efficiency']):.3f}, {sum(data['pert_swap_efficiency'])/len(data['pert_swap_efficiency']):.3f}"
+                f"Average of {self.args.batch_size * (i + 1)} pictures: pert utility(mse, psnr, ssim): {sum(data['pert_mse'])/len(data['pert_mse']):.3f} {sum(data['pert_psnr'])/len(data['pert_psnr']):.3f} {sum(data['pert_ssim'])/len(data['pert_ssim']):.3f}, pert swap utility(mse, psnr, ssim): {sum(data['pert_swap_mse'])/len(data['pert_swap_mse']):.3f} {sum(data['pert_swap_psnr'])/len(data['pert_swap_psnr']):.3f} {sum(data['pert_swap_ssim'])/len(data['pert_swap_ssim']):.3f}, effectiveness(pert, swap, pert swap): {sum(data['pert_effectiveness'])/len(data['pert_effectiveness']):.3f}, {sum(data['swap_effectiveness'])/len(data['swap_effectiveness']):.3f}, {sum(data['pert_swap_effectiveness'])/len(data['pert_swap_effectiveness']):.3f}"
             )
 
     def _get_all_imgs_path(self, train_set: bool = True) -> list[str]:
@@ -1446,9 +1493,9 @@ class SimSwapDefense(nn.Module):
             "pert_swap_mse": [],
             "pert_swap_psnr": [],
             "pert_swap_ssim": [],
-            "pert_efficiency": [],
-            "swap_efficiency": [],
-            "pert_swap_efficiency": [],
+            "pert_effectiveness": [],
+            "swap_effectiveness": [],
+            "pert_swap_effectiveness": [],
         }
         total_batch = (
             min(len(source_imgs_path), len(target_imgs_path)) // self.args.batch_size
@@ -1487,15 +1534,15 @@ class SimSwapDefense(nn.Module):
             data["pert_swap_ssim"].append(pert_swap_ssim)
 
             (
-                pert_efficiency,
-                swap_efficiency,
-                pert_swap_efficiency,
-            ) = self._calculate_efficiency(
+                pert_effectiveness,
+                swap_effectiveness,
+                pert_swap_effectiveness,
+            ) = self._calculate_effectiveness(
                 source_imgs, None, pert_source_imgs, swap_imgs, pert_swap_imgs
             )
-            data["pert_efficiency"].append(pert_efficiency)
-            data["swap_efficiency"].append(swap_efficiency)
-            data["pert_swap_efficiency"].append(pert_swap_efficiency)
+            data["pert_effectiveness"].append(pert_effectiveness)
+            data["swap_effectiveness"].append(swap_effectiveness)
+            data["pert_swap_effectiveness"].append(pert_swap_effectiveness)
 
             if i % self.args.log_interval == 0:
                 results = torch.cat(
@@ -1516,11 +1563,11 @@ class SimSwapDefense(nn.Module):
             torch.cuda.empty_cache()
 
             self.logger.info(
-                f"Iter {i:5}/{total_batch:5}, pert utility(mse, psnr, ssim): {pert_mse:.3f} {pert_psnr:.3f} {pert_ssim:.3f}, pert swap utility(mse, psnr, ssim): {pert_swap_mse:.3f} {pert_swap_psnr:.3f} {pert_swap_ssim:.3f}, efficiency (pert, clean swap, pert swap): {pert_efficiency:.3f}, {swap_efficiency:.3f}, {pert_swap_efficiency:.3f}"
+                f"Iter {i:5}/{total_batch:5}, pert utility(mse, psnr, ssim): {pert_mse:.3f} {pert_psnr:.3f} {pert_ssim:.3f}, pert swap utility(mse, psnr, ssim): {pert_swap_mse:.3f} {pert_swap_psnr:.3f} {pert_swap_ssim:.3f}, effectiveness (pert, clean swap, pert swap): {pert_effectiveness:.3f}, {swap_effectiveness:.3f}, {pert_swap_effectiveness:.3f}"
             )
 
             self.logger.info(
-                f"Average of {self.args.batch_size * (i+1)} pictures: pert utility(mse, psnr, ssim): {sum(data['pert_mse'])/len(data['pert_mse']):.3f} {sum(data['pert_psnr'])/len(data['pert_psnr']):.3f} {sum(data['pert_ssim'])/len(data['pert_ssim']):.3f}, pert swap utility(mse, psnr, ssim): {sum(data['pert_swap_mse'])/len(data['pert_swap_mse']):.3f} {sum(data['pert_swap_psnr'])/len(data['pert_swap_psnr']):.3f} {sum(data['pert_swap_ssim'])/len(data['pert_swap_ssim']):.3f}, efficiency(pert, swap, pert swap, anchor): {sum(data['pert_efficiency'])/len(data['pert_efficiency']):.3f}, {sum(data['swap_efficiency'])/len(data['swap_efficiency']):.3f}, {sum(data['pert_swap_efficiency'])/len(data['pert_swap_efficiency']):.3f}"
+                f"Average of {self.args.batch_size * (i+1)} pictures: pert utility(mse, psnr, ssim): {sum(data['pert_mse'])/len(data['pert_mse']):.3f} {sum(data['pert_psnr'])/len(data['pert_psnr']):.3f} {sum(data['pert_ssim'])/len(data['pert_ssim']):.3f}, pert swap utility(mse, psnr, ssim): {sum(data['pert_swap_mse'])/len(data['pert_swap_mse']):.3f} {sum(data['pert_swap_psnr'])/len(data['pert_swap_psnr']):.3f} {sum(data['pert_swap_ssim'])/len(data['pert_swap_ssim']):.3f}, effectiveness(pert, swap, pert swap, anchor): {sum(data['pert_effectiveness'])/len(data['pert_effectiveness']):.3f}, {sum(data['swap_effectiveness'])/len(data['swap_effectiveness']):.3f}, {sum(data['pert_swap_effectiveness'])/len(data['pert_swap_effectiveness']):.3f}"
             )
 
     def gan_target_metric(self):
@@ -1563,9 +1610,9 @@ class SimSwapDefense(nn.Module):
             "pert_swap_mse": [],
             "pert_swap_psnr": [],
             "pert_swap_ssim": [],
-            "pert_efficiency": [],
-            "swap_efficiency": [],
-            "pert_swap_efficiency": [],
+            "pert_effectiveness": [],
+            "swap_effectiveness": [],
+            "pert_swap_effectiveness": [],
         }
         total_batch = (
             min(len(source_imgs_path), len(target_imgs_path)) // self.args.batch_size
@@ -1602,8 +1649,8 @@ class SimSwapDefense(nn.Module):
             data["pert_swap_psnr"].append(pert_swap_psnr)
             data["pert_swap_ssim"].append(pert_swap_ssim)
 
-            pert_efficiency, swap_efficiency, pert_swap_efficiency = (
-                self._calculate_efficiency(
+            pert_effectiveness, swap_effectiveness, pert_swap_effectiveness = (
+                self._calculate_effectiveness(
                     source_imgs,
                     target_imgs,
                     pert_target_imgs,
@@ -1611,9 +1658,9 @@ class SimSwapDefense(nn.Module):
                     pert_swap_imgs,
                 )
             )
-            data["pert_efficiency"].append(pert_efficiency)
-            data["swap_efficiency"].append(swap_efficiency)
-            data["pert_swap_efficiency"].append(pert_swap_efficiency)
+            data["pert_effectiveness"].append(pert_effectiveness)
+            data["swap_effectiveness"].append(swap_effectiveness)
+            data["pert_swap_effectiveness"].append(pert_swap_effectiveness)
 
             if i % self.args.log_interval == 0:
                 results = torch.cat(
@@ -1633,11 +1680,11 @@ class SimSwapDefense(nn.Module):
             del pert_target_imgs, pert_swap_imgs
 
             self.logger.info(
-                f"Iter {i:5}/{total_batch:5}, pert utility(mse, psnr, ssim): {pert_mse:.3f} {pert_psnr:.3f} {pert_ssim:.3f}, pert swap utility(mse, psnr, ssim): {pert_swap_mse:.3f} {pert_swap_psnr:.3f} {pert_swap_ssim:.3f}, efficiency (pert, clean swap, pert swap): {pert_efficiency:.3f}, {swap_efficiency:.3f}, {pert_swap_efficiency:.3f}"
+                f"Iter {i:5}/{total_batch:5}, pert utility(mse, psnr, ssim): {pert_mse:.3f} {pert_psnr:.3f} {pert_ssim:.3f}, pert swap utility(mse, psnr, ssim): {pert_swap_mse:.3f} {pert_swap_psnr:.3f} {pert_swap_ssim:.3f}, effectiveness (pert, clean swap, pert swap): {pert_effectiveness:.3f}, {swap_effectiveness:.3f}, {pert_swap_effectiveness:.3f}"
             )
 
             self.logger.info(
-                f"Average of {self.args.batch_size * (i+1)} pictures: pert utility(mse, psnr, ssim): {sum(data['pert_mse'])/len(data['pert_mse']):.3f} {sum(data['pert_psnr'])/len(data['pert_psnr']):.3f} {sum(data['pert_ssim'])/len(data['pert_ssim']):.3f}, pert swap utility(mse, psnr, ssim): {sum(data['pert_swap_mse'])/len(data['pert_swap_mse']):.3f} {sum(data['pert_swap_psnr'])/len(data['pert_swap_psnr']):.3f} {sum(data['pert_swap_ssim'])/len(data['pert_swap_ssim']):.3f}, efficiency(pert, swap, pert swap, anchor): {sum(data['pert_efficiency'])/len(data['pert_efficiency']):.3f}, {sum(data['swap_efficiency'])/len(data['swap_efficiency']):.3f}, {sum(data['pert_swap_efficiency'])/len(data['pert_swap_efficiency']):.3f}"
+                f"Average of {self.args.batch_size * (i+1)} pictures: pert utility(mse, psnr, ssim): {sum(data['pert_mse'])/len(data['pert_mse']):.3f} {sum(data['pert_psnr'])/len(data['pert_psnr']):.3f} {sum(data['pert_ssim'])/len(data['pert_ssim']):.3f}, pert swap utility(mse, psnr, ssim): {sum(data['pert_swap_mse'])/len(data['pert_swap_mse']):.3f} {sum(data['pert_swap_psnr'])/len(data['pert_swap_psnr']):.3f} {sum(data['pert_swap_ssim'])/len(data['pert_swap_ssim']):.3f}, effectiveness(pert, swap, pert swap, anchor): {sum(data['pert_effectiveness'])/len(data['pert_effectiveness']):.3f}, {sum(data['swap_effectiveness'])/len(data['swap_effectiveness']):.3f}, {sum(data['pert_swap_effectiveness'])/len(data['pert_swap_effectiveness']):.3f}"
             )
 
     def __gauss_noise(
@@ -1696,7 +1743,7 @@ class SimSwapDefense(nn.Module):
             pert_robust_imgs_swap.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
         )
 
-        effectiveness, _ = self.efficiency.compare(
+        effectiveness, _ = self.effectiveness.compare(
             source_imgs_ndarray, pert_robust_imgs_ndarray
         )
 
