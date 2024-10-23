@@ -75,6 +75,9 @@ def get_argparser():
     parser.add_argument("--data_dir", type=str, default="crop_224")
     parser.add_argument("--random_seed", type=int, default=0)
 
+    parser.add_argument("--batch_size", type=int, default=16)
+    parser.add_argument("--epochs", type=int, default=100)
+
     parser.add_argument("--testset_people_count", type=int, default=863)
 
     parser.add_argument("--swap_source", type=str)
@@ -85,22 +88,13 @@ def get_argparser():
     parser.add_argument("--pgd_source", type=str)
     parser.add_argument("--pgd_target", type=str)
     parser.add_argument("--pgd_mimic", type=str)
-    parser.add_argument("--pgd_epochs", type=int, default=100)
     parser.add_argument("--pgd_epsilon", type=float, default=1e-2)
     parser.add_argument("--pgd_limit", type=float, default=5e-2)
-    parser.add_argument("--pgd_log_interval", type=int, default=10)
     parser.add_argument("--pgd_metric_people", type=int, default=500)
     parser.add_argument("--pgd_people_imgs", type=int, default=10)
-    parser.add_argument("--pgd_batch_size", type=int, default=10)
 
-    parser.add_argument("--gan_epochs", type=int, default=10000)
-    parser.add_argument("--gan_batch_size", type=int, default=16)
     parser.add_argument("--gan_generator_lr", type=float, default=5e-4)
-    parser.add_argument("--gan_generator_interval", type=int, default=100)
     parser.add_argument("--gan_test_models", type=str)
-
-    parser.add_argument("--eval_A", type=str)
-    parser.add_argument("--eval_B", type=str)
 
     args = parser.parse_args()
 

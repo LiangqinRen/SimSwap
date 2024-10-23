@@ -129,13 +129,3 @@ class Evaluate:
                 )
             all_images[i] = image
         return all_images
-
-    def evaluate(self):
-        A_imgs = self._load_images(self.args.eval_A)
-        B_imgs = self._load_images(self.args.eval_B)
-
-        efficiency = self.efficiency.compare(A_imgs, B_imgs)
-        mse, ssim, psnr = self.utility.compare(A_imgs, B_imgs)
-        self.logger.info(
-            f"Compare {self.args.eval_A} with {self.args.eval_B}, efficiency: {efficiency:.3f}, utility: {mse:.3f}, {ssim:.3f}, {psnr:.3f}"
-        )
