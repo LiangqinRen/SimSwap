@@ -31,7 +31,8 @@ def main():
         "gan_target_metric": defense.gan_target_metric,
         "gan_source_robustness_sample": defense.gan_source_robustness_sample,
         "gan_source_robustness_metric": defense.gan_source_robustness_metric,
-        # "gan_target_robust": defense.GAN_TGT_robust,
+        "gan_target_robustness_sample": defense.gan_target_robustness_sample,
+        # "gan_source_robustness_metric": defense.gan_source_robustness_metric,
         "test": defense._get_split_test_imgs_path,
     }
 
