@@ -1640,7 +1640,7 @@ class SimSwapDefense(nn.Module):
                 f"Average of {self.args.batch_size * (i+1)} pictures: pert utility(mse, psnr, ssim): {sum(data['pert_mse'])/len(data['pert_mse']):.3f} {sum(data['pert_psnr'])/len(data['pert_psnr']):.3f} {sum(data['pert_ssim'])/len(data['pert_ssim']):.3f}, pert swap utility(mse, psnr, ssim): {sum(data['pert_swap_mse'])/len(data['pert_swap_mse']):.3f} {sum(data['pert_swap_psnr'])/len(data['pert_swap_psnr']):.3f} {sum(data['pert_swap_ssim'])/len(data['pert_swap_ssim']):.3f}, efficiency(pert, swap, pert swap, anchor): {sum(data['pert_efficiency'])/len(data['pert_efficiency']):.3f}, {sum(data['swap_efficiency'])/len(data['swap_efficiency']):.3f}, {sum(data['pert_swap_efficiency'])/len(data['pert_swap_efficiency']):.3f}"
             )
 
-    def _gauss_noise(
+    def __gauss_noise(
         self, pert: torch.tensor, gauss_mean: float, gauss_std: float
     ) -> torch.tensor:
         gauss_noise = gauss_mean + gauss_std * torch.randn(pert.shape).cuda()
@@ -1648,7 +1648,7 @@ class SimSwapDefense(nn.Module):
 
         return noise_pert
 
-    def _gauss_kernel(self, size: int, sigma: float):
+    def __gauss_kernel(self, size: int, sigma: float):
         coords = torch.arange(size, dtype=torch.float32) - (size - 1) / 2.0
         grid = coords.repeat(size).view(size, size)
         kernel = torch.exp(-0.5 * (grid**2 + grid.t() ** 2) / sigma**2)
@@ -1656,15 +1656,15 @@ class SimSwapDefense(nn.Module):
 
         return kernel
 
-    def _gauss_blur(self, pert: torch.tensor, size: int, sigma: float) -> torch.tensor:
-        kernel = self._gauss_kernel(size, sigma).cuda()
+    def __gauss_blur(self, pert: torch.tensor, size: int, sigma: float) -> torch.tensor:
+        kernel = self.__gauss_kernel(size, sigma).cuda()
         kernel = kernel.view(1, 1, size, size)
         kernel = kernel.repeat(pert.shape[1], 1, 1, 1)
         blurred_pert = F.conv2d(pert, kernel, padding=size // 2, groups=pert.shape[1])
 
         return blurred_pert.squeeze(0)
 
-    def _jpeg_compress(self, pert: torch.tensor, ratio: int) -> torch.tensor:
+    def __jpeg_compress(self, pert: torch.tensor, ratio: int) -> torch.tensor:
         pert_np = pert.detach().cpu().numpy().transpose(0, 2, 3, 1)
         pert_np = np.clip(pert_np * 255.0, 0, 255).astype("uint8")
         encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), int(ratio)]
@@ -1677,180 +1677,14 @@ class SimSwapDefense(nn.Module):
 
         return compress_pert
 
-    def _rotate(self, pert: torch.tensor, angle: float) -> None:
+    def __rotate(self, pert: torch.tensor, angle: float) -> None:
         import torchvision.transforms.functional as F
 
         rotated_tensor = torch.stack([F.rotate(tensor, angle) for tensor in pert])
 
         return rotated_tensor
 
-    # def gan_source_robustness(self) -> None:
-    #     gauss_mean, gauss_std = 0, 0.1
-    #     gauss_size, gauss_sigma = 5, 3.0
-    #     jpeg_ratio = 70
-
-    #     model_path = join("checkpoints", self.args.gan_test_models)
-    #     self.GAN_G.load_state_dict(torch.load(model_path)["GAN_G_state_dict"])
-
-    #     self.target.cuda().eval()
-    #     self.GAN_G.cuda().eval()
-
-    #     source_path = [
-    #         join(self.samples_dir, "zjl.jpg"),
-    #         join(self.samples_dir, "6.jpg"),
-    #         join(self.samples_dir, "hzxc.jpg"),
-    #     ]
-    #     target_path = [
-    #         join(self.samples_dir, "zrf.jpg"),
-    #         join(self.samples_dir, "zrf.jpg"),
-    #         join(self.samples_dir, "zrf.jpg"),
-    #     ]
-
-    #     source_imgs = self._load_imgs(source_path)
-    #     target_imgs = self._load_imgs(target_path)
-    #     source_identity = self._get_imgs_identity(source_imgs)
-    #     swap_imgs = self.target(None, target_imgs, source_identity, None, True)
-
-    #     pert_imgs = self.GAN_G(source_imgs)
-    #     pert_identity = self._get_imgs_identity(pert_imgs)
-    #     pert_swap_imgs = self.target(None, target_imgs, pert_identity, None, True)
-
-    #     noise_imgs = self._gauss_noise(pert_imgs, gauss_mean, gauss_std)
-    #     noise_identity = self._get_imgs_identity(noise_imgs)
-    #     noise_swap_imgs = self.target(None, target_imgs, noise_identity, None, True)
-
-    #     blur_imgs = self._gauss_blur(pert_imgs, gauss_size, gauss_sigma)
-    #     blur_identity = self._get_imgs_identity(blur_imgs)
-    #     blur_swap_imgs = self.target(None, target_imgs, blur_identity, None, True)
-
-    #     compress_imgs = self._jpeg_compress(pert_imgs, jpeg_ratio)
-    #     compress_identity = self._get_imgs_identity(compress_imgs)
-    #     compress_swap_imgs = self.target(
-    #         None, target_imgs, compress_identity, None, True
-    #     )
-
-    #     rotate_imgs = self._rotate(pert_imgs, random.random() * 360)
-    #     rotate_identity = self._get_imgs_identity(rotate_imgs)
-    #     rotate_swap_imgs = self.target(None, target_imgs, rotate_identity, None, True)
-    #     self._save_imgs(
-    #         [
-    #             source_imgs,
-    #             target_imgs,
-    #             swap_imgs,
-    #             pert_imgs,
-    #             pert_swap_imgs,
-    #             noise_imgs,
-    #             noise_swap_imgs,
-    #             blur_imgs,
-    #             blur_swap_imgs,
-    #             compress_imgs,
-    #             compress_swap_imgs,
-    #             rotate_imgs,
-    #             rotate_swap_imgs,
-    #         ]
-    #     )
-
-    #     source_imgs_path, target_imgs_path = self._get_split_test_imgs_path()
-    #     efficiencies = {
-    #         "clean": [],
-    #         "pert": [],
-    #         "noise": [],
-    #         "blur": [],
-    #         "compress": [],
-    #         "rotate": [],
-    #     }
-    #     total_batch = (
-    #         min(len(source_imgs_path), len(target_imgs_path))
-    #         // self.args.batch_size
-    #     )
-    #     for i in range(total_batch):
-    #         iter_source_path = source_imgs_path[
-    #             i * self.args.batch_size : (i + 1) * self.args.batch_size
-    #         ]
-    #         iter_target_path = target_imgs_path[
-    #             i * self.args.batch_size : (i + 1) * self.args.batch_size
-    #         ]
-
-    #         source_imgs = self._load_imgs(iter_source_path)
-    #         target_imgs = self._load_imgs(iter_target_path)
-    #         source_identity = self._get_imgs_identity(source_imgs)
-    #         swap_imgs = self.target(None, target_imgs, source_identity, None, True)
-
-    #         pert_imgs = self.GAN_G(target_imgs)
-    #         pert_identity = self._get_imgs_identity(pert_imgs)
-    #         pert_swap_imgs = self.target(None, target_imgs, pert_identity, None, True)
-
-    #         noise_imgs = self._gauss_noise(pert_imgs, gauss_mean, gauss_std)
-    #         noise_identity = self._get_imgs_identity(noise_imgs)
-    #         noise_swap_imgs = self.target(None, target_imgs, noise_identity, None, True)
-
-    #         blur_imgs = self._gauss_blur(pert_imgs, gauss_size, gauss_sigma)
-    #         blur_identity = self._get_imgs_identity(blur_imgs)
-    #         blur_swap_imgs = self.target(None, target_imgs, blur_identity, None, True)
-
-    #         compress_imgs = self._jpeg_compress(pert_imgs, jpeg_ratio)
-    #         compress_identity = self._get_imgs_identity(compress_imgs)
-    #         compress_swap_imgs = self.target(
-    #             None, target_imgs, compress_identity, None, True
-    #         )
-
-    #         rotate_imgs = self._rotate(pert_imgs, random.random() * 360)
-    #         rotate_identity = self._get_imgs_identity(rotate_imgs)
-    #         rotate_swap_imgs = self.target(
-    #             None, target_imgs, rotate_identity, None, True
-    #         )
-
-    #         clean_swap_effi, pert_swap_effi = self._calculate_efficiency(
-    #             source_imgs, swap_imgs, pert_swap_imgs
-    #         )
-    #         efficiencies["clean"].append(clean_swap_effi)
-    #         efficiencies["pert"].append(pert_swap_effi)
-
-    #         _, noise_swap_effi = self._calculate_efficiency(
-    #             source_imgs, swap_imgs, noise_swap_imgs
-    #         )
-    #         efficiencies["noise"].append(noise_swap_effi)
-
-    #         _, blur_swap_effi = self._calculate_efficiency(
-    #             source_imgs, swap_imgs, blur_swap_imgs
-    #         )
-    #         efficiencies["blur"].append(blur_swap_effi)
-
-    #         _, compress_swap_effi = self._calculate_efficiency(
-    #             source_imgs, swap_imgs, compress_swap_imgs
-    #         )
-    #         efficiencies["compress"].append(compress_swap_effi)
-
-    #         _, rotate_swap_effi = self._calculate_efficiency(
-    #             source_imgs, swap_imgs, rotate_swap_imgs
-    #         )
-    #         efficiencies["rotate"].append(rotate_swap_effi)
-
-    #         del (
-    #             swap_imgs,
-    #             pert_swap_imgs,
-    #             noise_imgs,
-    #             noise_swap_imgs,
-    #             blur_imgs,
-    #             blur_swap_imgs,
-    #             compress_imgs,
-    #             compress_swap_imgs,
-    #             rotate_imgs,
-    #             rotate_swap_imgs,
-    #         )
-
-    #         utility = self._calculate_utility(target_imgs, pert_imgs)
-
-    #         self.logger.info(
-    #             f"Iter {i:4}/{total_batch:4}, utility: {utility:.3f}, efficiency: {clean_swap_effi:.3f}, {pert_swap_effi:.3f}, {noise_swap_effi:.3f}, {blur_swap_effi:.3f}, {compress_swap_effi:.3f}, {rotate_swap_effi:.3f}"
-    #         )
-
-    #         torch.cuda.empty_cache()
-
-    #     self.logger.info(
-    #         f"Average of {total_batch:4} batch and {self.args.batch_size * total_batch:6} pictures: efficiency: {sum(efficiencies['clean'])/len(efficiencies['clean']):.3f}, {sum(efficiencies['pert'])/len(efficiencies['pert']):.3f}, {sum(efficiencies['noise'])/len(efficiencies['noise']):.3f}, {sum(efficiencies['blur'])/len(efficiencies['blur']):.3f}, {sum(efficiencies['compress'])/len(efficiencies['compress']):.3f}, {sum(efficiencies['rotate'])/len(efficiencies['rotate']):.3f}"
-    #     )
-    def _calculate_robustness_effectiveness(
+    def __calculate_robustness_effectiveness(
         self,
         source_imgs: torch.tensor,
         pert_robust_imgs_swap: torch.tensor,
@@ -1895,6 +1729,175 @@ class SimSwapDefense(nn.Module):
         )
         del results
 
+    def pgd_source_robustness_sample(self, loss_weights=[1, 1]):
+        self.logger.info(f"loss_weights: {loss_weights}")
+
+        gauss_mean, gauss_std = 0, 0.1
+        gauss_size, gauss_sigma = 5, 3.0
+        jpeg_ratio = 70
+        rotate_angle = 60
+
+        self.target.cuda().eval()
+        l2_loss = nn.MSELoss().cuda()
+
+        source_path = [
+            join(self.samples_dir, "zjl.jpg"),
+            join(self.samples_dir, "6.jpg"),
+            join(self.samples_dir, "hzxc.jpg"),
+        ]
+        target_path = [
+            join(self.samples_dir, "zrf.jpg"),
+            join(self.samples_dir, "zrf.jpg"),
+            join(self.samples_dir, "zrf.jpg"),
+        ]
+
+        source_imgs = self._load_imgs(source_path)
+        target_imgs = self._load_imgs(target_path)
+        source_identity = self._get_imgs_identity(source_imgs)
+        swap_imgs = self.target(None, target_imgs, source_identity, None, True)
+
+        x_imgs = source_imgs.clone().detach()
+        epsilon = (
+            self.args.pgd_epsilon
+            * (torch.max(source_imgs) - torch.min(source_imgs))
+            / 2
+        )
+
+        mimic_img = self._load_imgs([join(self.args.data_dir, self.args.pgd_mimic)])
+        mimic_img_expand = mimic_img.repeat(len(source_path), 1, 1, 1)
+        mimic_identity_expand = self._get_imgs_identity(mimic_img_expand)
+        for epoch in range(self.args.epochs):
+            x_imgs.requires_grad = True
+
+            x_identity = torch.empty(len(source_path), 512).cuda()
+            for j in range(len(source_path)):
+                identity = self._get_imgs_identity(x_imgs[j].unsqueeze(0))
+                x_identity[j] = identity[0]
+                del identity
+
+            pert_diff_loss = l2_loss(x_imgs, source_imgs.detach())
+            identity_diff_loss = l2_loss(x_identity, mimic_identity_expand.detach())
+
+            loss = (
+                loss_weights[0] * pert_diff_loss + loss_weights[1] * identity_diff_loss
+            )
+            loss.backward()
+
+            x_imgs = (
+                x_imgs.clone().detach() - epsilon * x_imgs.grad.sign().clone().detach()
+            )
+            x_imgs = torch.clamp(
+                x_imgs,
+                min=source_imgs - self.args.pgd_limit,
+                max=source_imgs + self.args.pgd_limit,
+            )
+
+            self.logger.info(
+                f"[Epoch {epoch+1:3}/{self.args.epochs:3}]loss: {loss:.5f}({loss_weights[0] * pert_diff_loss.item():.5f}, {loss_weights[1] * identity_diff_loss.item():.5f})"
+            )
+
+        x_identity = self._get_imgs_identity(x_imgs)
+        x_swap_img = self.target(None, target_imgs, x_identity, None, True)
+
+        noise_imgs = self.__gauss_noise(x_imgs, gauss_mean, gauss_std)
+        noise_identity = self._get_imgs_identity(noise_imgs)
+        noise_swap_imgs = self.target(None, target_imgs, noise_identity, None, True)
+        noise_mse, noise_psnr, noise_ssim = self._calculate_utility(
+            swap_imgs, noise_swap_imgs
+        )
+        noise_effec = self.__calculate_robustness_effectiveness(
+            source_imgs, noise_swap_imgs
+        )
+        self.__save_robustness_samples(
+            "noise",
+            [
+                source_imgs,
+                target_imgs,
+                swap_imgs,
+                x_imgs,
+                x_swap_img,
+                noise_imgs,
+                noise_swap_imgs,
+            ],
+        )
+        del noise_imgs, noise_identity, noise_swap_imgs
+
+        blur_imgs = self.__gauss_blur(x_imgs, gauss_size, gauss_sigma)
+        blur_identity = self._get_imgs_identity(blur_imgs)
+        blur_swap_imgs = self.target(None, target_imgs, blur_identity, None, True)
+        blur_mse, blur_psnr, blur_ssim = self._calculate_utility(
+            swap_imgs, blur_swap_imgs
+        )
+        blur_effec = self.__calculate_robustness_effectiveness(
+            source_imgs, blur_swap_imgs
+        )
+        self.__save_robustness_samples(
+            "blur",
+            [
+                source_imgs,
+                target_imgs,
+                swap_imgs,
+                x_imgs,
+                x_swap_img,
+                blur_imgs,
+                blur_swap_imgs,
+            ],
+        )
+        del blur_imgs, blur_identity, blur_swap_imgs
+
+        compress_imgs = self.__jpeg_compress(x_imgs, jpeg_ratio)
+        compress_identity = self._get_imgs_identity(compress_imgs)
+        compress_swap_imgs = self.target(
+            None, target_imgs, compress_identity, None, True
+        )
+        compress_mse, compress_psnr, compress_ssim = self._calculate_utility(
+            swap_imgs, compress_swap_imgs
+        )
+        compress_effec = self.__calculate_robustness_effectiveness(
+            source_imgs, compress_swap_imgs
+        )
+        self.__save_robustness_samples(
+            "compress",
+            [
+                source_imgs,
+                target_imgs,
+                swap_imgs,
+                x_imgs,
+                x_swap_img,
+                compress_imgs,
+                compress_swap_imgs,
+            ],
+        )
+        del compress_imgs, compress_identity, compress_swap_imgs
+
+        rotate_imgs = self.__rotate(x_imgs, rotate_angle)
+        rotate_identity = self._get_imgs_identity(rotate_imgs)
+        rotate_swap_imgs = self.target(None, target_imgs, rotate_identity, None, True)
+        rotate_mse, rotate_psnr, rotate_ssim = self._calculate_utility(
+            swap_imgs, rotate_swap_imgs
+        )
+        rotate_effec = self.__calculate_robustness_effectiveness(
+            source_imgs, rotate_swap_imgs
+        )
+        self.__save_robustness_samples(
+            "rotate",
+            [
+                source_imgs,
+                target_imgs,
+                swap_imgs,
+                x_imgs,
+                x_swap_img,
+                rotate_imgs,
+                rotate_swap_imgs,
+            ],
+        )
+        del rotate_imgs, rotate_identity, rotate_swap_imgs
+
+        torch.cuda.empty_cache()
+        self.logger.info(
+            f"noise, blur, compress, rotate(mse, psnr, ssim, effectiveness): ({noise_mse:.3f}, {noise_psnr:.3f}, {noise_ssim:.3f}, {noise_effec:.3f}), ({blur_mse:.3f}, {blur_psnr:.3f}, {blur_ssim:.3f}, {blur_effec:.3f}), ({compress_mse:.3f}, {compress_psnr:.3f}, {compress_ssim:.3f}, {compress_effec:.3f}), ({rotate_mse:.3f}, {rotate_psnr:.3f}, {rotate_ssim:.3f}, {rotate_effec:.3f})"
+        )
+
     def gan_source_robustness_sample(self) -> None:
         gauss_mean, gauss_std = 0, 0.1
         gauss_size, gauss_sigma = 5, 3.0
@@ -1929,13 +1932,13 @@ class SimSwapDefense(nn.Module):
             None, target_imgs, pert_source_identity, None, True
         )
 
-        noise_imgs = self._gauss_noise(pert_source_imgs, gauss_mean, gauss_std)
+        noise_imgs = self.__gauss_noise(pert_source_imgs, gauss_mean, gauss_std)
         noise_identity = self._get_imgs_identity(noise_imgs)
         noise_swap_imgs = self.target(None, target_imgs, noise_identity, None, True)
         noise_mse, noise_psnr, noise_ssim = self._calculate_utility(
             swap_imgs, noise_swap_imgs
         )
-        noise_effec = self._calculate_robustness_effectiveness(
+        noise_effec = self.__calculate_robustness_effectiveness(
             source_imgs, noise_swap_imgs
         )
         self.__save_robustness_samples(
@@ -1952,13 +1955,13 @@ class SimSwapDefense(nn.Module):
         )
         del noise_imgs, noise_identity, noise_swap_imgs
 
-        blur_imgs = self._gauss_blur(pert_source_imgs, gauss_size, gauss_sigma)
+        blur_imgs = self.__gauss_blur(pert_source_imgs, gauss_size, gauss_sigma)
         blur_identity = self._get_imgs_identity(blur_imgs)
         blur_swap_imgs = self.target(None, target_imgs, blur_identity, None, True)
         blur_mse, blur_psnr, blur_ssim = self._calculate_utility(
             swap_imgs, blur_swap_imgs
         )
-        blur_effec = self._calculate_robustness_effectiveness(
+        blur_effec = self.__calculate_robustness_effectiveness(
             source_imgs, blur_swap_imgs
         )
         self.__save_robustness_samples(
@@ -1975,7 +1978,7 @@ class SimSwapDefense(nn.Module):
         )
         del blur_imgs, blur_identity, blur_swap_imgs
 
-        compress_imgs = self._jpeg_compress(pert_source_imgs, jpeg_ratio)
+        compress_imgs = self.__jpeg_compress(pert_source_imgs, jpeg_ratio)
         compress_identity = self._get_imgs_identity(compress_imgs)
         compress_swap_imgs = self.target(
             None, target_imgs, compress_identity, None, True
@@ -1983,7 +1986,7 @@ class SimSwapDefense(nn.Module):
         compress_mse, compress_psnr, compress_ssim = self._calculate_utility(
             swap_imgs, compress_swap_imgs
         )
-        compress_effec = self._calculate_robustness_effectiveness(
+        compress_effec = self.__calculate_robustness_effectiveness(
             source_imgs, compress_swap_imgs
         )
         self.__save_robustness_samples(
@@ -2000,13 +2003,13 @@ class SimSwapDefense(nn.Module):
         )
         del compress_imgs, compress_identity, compress_swap_imgs
 
-        rotate_imgs = self._rotate(pert_source_imgs, rotate_angle)
+        rotate_imgs = self.__rotate(pert_source_imgs, rotate_angle)
         rotate_identity = self._get_imgs_identity(rotate_imgs)
         rotate_swap_imgs = self.target(None, target_imgs, rotate_identity, None, True)
         rotate_mse, rotate_psnr, rotate_ssim = self._calculate_utility(
             swap_imgs, rotate_swap_imgs
         )
-        rotate_effec = self._calculate_robustness_effectiveness(
+        rotate_effec = self.__calculate_robustness_effectiveness(
             source_imgs, rotate_swap_imgs
         )
         self.__save_robustness_samples(
@@ -2061,12 +2064,12 @@ class SimSwapDefense(nn.Module):
             None, pert_target_imgs, source_identity, None, True
         )
 
-        noise_imgs = self._gauss_noise(pert_target_imgs, gauss_mean, gauss_std)
+        noise_imgs = self.__gauss_noise(pert_target_imgs, gauss_mean, gauss_std)
         noise_swap_imgs = self.target(None, noise_imgs, source_identity, None, True)
         noise_mse, noise_psnr, noise_ssim = self._calculate_utility(
             swap_imgs, noise_swap_imgs
         )
-        noise_effec = self._calculate_robustness_effectiveness(
+        noise_effec = self.__calculate_robustness_effectiveness(
             source_imgs, noise_swap_imgs
         )
         self.__save_robustness_samples(
@@ -2083,12 +2086,12 @@ class SimSwapDefense(nn.Module):
         )
         del noise_imgs, noise_swap_imgs
 
-        blur_imgs = self._gauss_blur(pert_target_imgs, gauss_size, gauss_sigma)
+        blur_imgs = self.__gauss_blur(pert_target_imgs, gauss_size, gauss_sigma)
         blur_swap_imgs = self.target(None, blur_imgs, source_identity, None, True)
         blur_mse, blur_psnr, blur_ssim = self._calculate_utility(
             swap_imgs, blur_swap_imgs
         )
-        blur_effec = self._calculate_robustness_effectiveness(
+        blur_effec = self.__calculate_robustness_effectiveness(
             source_imgs, blur_swap_imgs
         )
         self.__save_robustness_samples(
@@ -2105,14 +2108,14 @@ class SimSwapDefense(nn.Module):
         )
         del blur_imgs, blur_swap_imgs
 
-        compress_imgs = self._jpeg_compress(pert_target_imgs, jpeg_ratio)
+        compress_imgs = self.__jpeg_compress(pert_target_imgs, jpeg_ratio)
         compress_swap_imgs = self.target(
             None, compress_imgs, source_identity, None, True
         )
         compress_mse, compress_psnr, compress_ssim = self._calculate_utility(
             swap_imgs, compress_swap_imgs
         )
-        compress_effec = self._calculate_robustness_effectiveness(
+        compress_effec = self.__calculate_robustness_effectiveness(
             source_imgs, compress_swap_imgs
         )
         self.__save_robustness_samples(
@@ -2129,12 +2132,12 @@ class SimSwapDefense(nn.Module):
         )
         del compress_imgs, compress_swap_imgs
 
-        rotate_imgs = self._rotate(pert_target_imgs, rotate_angle)
+        rotate_imgs = self.__rotate(pert_target_imgs, rotate_angle)
         rotate_swap_imgs = self.target(None, rotate_imgs, source_identity, None, True)
         rotate_mse, rotate_psnr, rotate_ssim = self._calculate_utility(
             swap_imgs, rotate_swap_imgs
         )
-        rotate_effec = self._calculate_robustness_effectiveness(
+        rotate_effec = self.__calculate_robustness_effectiveness(
             source_imgs, rotate_swap_imgs
         )
         self.__save_robustness_samples(
@@ -2199,7 +2202,7 @@ class SimSwapDefense(nn.Module):
 
             pert_imgs = self.GAN_G(source_imgs)
 
-            noise_imgs = self._gauss_noise(pert_imgs, gauss_mean, gauss_std)
+            noise_imgs = self.__gauss_noise(pert_imgs, gauss_mean, gauss_std)
             noise_identity = self._get_imgs_identity(noise_imgs)
             noise_swap_imgs = self.target(None, target_imgs, noise_identity, None, True)
             noise_mse, noise_psnr, noise_ssim = self._calculate_utility(
@@ -2216,13 +2219,13 @@ class SimSwapDefense(nn.Module):
                     ),
                 )
             )
-            noise_effec = self._calculate_robustness_effectiveness(
+            noise_effec = self.__calculate_robustness_effectiveness(
                 source_imgs, noise_swap_imgs
             )
             effectiveness["noise"] += noise_effec
             del noise_imgs, noise_identity, noise_swap_imgs
 
-            blur_imgs = self._gauss_blur(pert_imgs, gauss_size, gauss_sigma)
+            blur_imgs = self.__gauss_blur(pert_imgs, gauss_size, gauss_sigma)
             blur_identity = self._get_imgs_identity(blur_imgs)
             blur_swap_imgs = self.target(None, target_imgs, blur_identity, None, True)
             blur_mse, blur_psnr, blur_ssim = self._calculate_utility(
@@ -2239,13 +2242,13 @@ class SimSwapDefense(nn.Module):
                     ),
                 )
             )
-            blur_effec = self._calculate_robustness_effectiveness(
+            blur_effec = self.__calculate_robustness_effectiveness(
                 source_imgs, blur_swap_imgs
             )
             effectiveness["blur"] += blur_effec
             del blur_imgs, blur_identity, blur_swap_imgs
 
-            compress_imgs = self._jpeg_compress(pert_imgs, jpeg_ratio)
+            compress_imgs = self.__jpeg_compress(pert_imgs, jpeg_ratio)
             compress_identity = self._get_imgs_identity(compress_imgs)
             compress_swap_imgs = self.target(
                 None, target_imgs, compress_identity, None, True
@@ -2264,13 +2267,13 @@ class SimSwapDefense(nn.Module):
                     ),
                 )
             )
-            compress_effec = self._calculate_robustness_effectiveness(
+            compress_effec = self.__calculate_robustness_effectiveness(
                 source_imgs, compress_swap_imgs
             )
             effectiveness["compress"] += compress_effec
             del compress_imgs, compress_identity, compress_swap_imgs
 
-            rotate_imgs = self._rotate(pert_imgs, random.random() * 360)
+            rotate_imgs = self.__rotate(pert_imgs, random.random() * 360)
             rotate_identity = self._get_imgs_identity(rotate_imgs)
             rotate_swap_imgs = self.target(
                 None, target_imgs, rotate_identity, None, True
@@ -2289,7 +2292,7 @@ class SimSwapDefense(nn.Module):
                     ),
                 )
             )
-            rotate_effec = self._calculate_robustness_effectiveness(
+            rotate_effec = self.__calculate_robustness_effectiveness(
                 source_imgs, rotate_swap_imgs
             )
             effectiveness["rotate"] += rotate_effec
@@ -2347,7 +2350,7 @@ class SimSwapDefense(nn.Module):
 
             pert_imgs = self.GAN_G(target_imgs)
 
-            noise_imgs = self._gauss_noise(pert_imgs, gauss_mean, gauss_std)
+            noise_imgs = self.__gauss_noise(pert_imgs, gauss_mean, gauss_std)
             noise_swap_imgs = self.target(None, noise_imgs, source_identity, None, True)
             noise_mse, noise_psnr, noise_ssim = self._calculate_utility(
                 swap_imgs, noise_swap_imgs
@@ -2363,13 +2366,13 @@ class SimSwapDefense(nn.Module):
                     ),
                 )
             )
-            noise_effec = self._calculate_robustness_effectiveness(
+            noise_effec = self.__calculate_robustness_effectiveness(
                 source_imgs, noise_swap_imgs
             )
             effectiveness["noise"] += noise_effec
             del noise_imgs, noise_swap_imgs
 
-            blur_imgs = self._gauss_blur(pert_imgs, gauss_size, gauss_sigma)
+            blur_imgs = self.__gauss_blur(pert_imgs, gauss_size, gauss_sigma)
             blur_swap_imgs = self.target(None, blur_imgs, source_identity, None, True)
             blur_mse, blur_psnr, blur_ssim = self._calculate_utility(
                 swap_imgs, blur_swap_imgs
@@ -2385,13 +2388,13 @@ class SimSwapDefense(nn.Module):
                     ),
                 )
             )
-            blur_effec = self._calculate_robustness_effectiveness(
+            blur_effec = self.__calculate_robustness_effectiveness(
                 source_imgs, blur_swap_imgs
             )
             effectiveness["blur"] += blur_effec
             del blur_imgs, blur_swap_imgs
 
-            compress_imgs = self._jpeg_compress(pert_imgs, jpeg_ratio)
+            compress_imgs = self.__jpeg_compress(pert_imgs, jpeg_ratio)
             compress_swap_imgs = self.target(
                 None, compress_imgs, source_identity, None, True
             )
@@ -2409,13 +2412,13 @@ class SimSwapDefense(nn.Module):
                     ),
                 )
             )
-            compress_effec = self._calculate_robustness_effectiveness(
+            compress_effec = self.__calculate_robustness_effectiveness(
                 source_imgs, compress_swap_imgs
             )
             effectiveness["compress"] += compress_effec
             del compress_imgs, compress_swap_imgs
 
-            rotate_imgs = self._rotate(pert_imgs, random.random() * 360)
+            rotate_imgs = self.__rotate(pert_imgs, random.random() * 360)
             rotate_swap_imgs = self.target(
                 None, rotate_imgs, source_identity, None, True
             )
@@ -2433,7 +2436,7 @@ class SimSwapDefense(nn.Module):
                     ),
                 )
             )
-            rotate_effec = self._calculate_robustness_effectiveness(
+            rotate_effec = self.__calculate_robustness_effectiveness(
                 source_imgs, rotate_swap_imgs
             )
             effectiveness["rotate"] += rotate_effec

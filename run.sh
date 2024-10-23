@@ -34,6 +34,9 @@ then
 elif [[ $mode == 'gan_source_metric' ]]
 then
     python main.py --method $mode --gan_test_models "gan_src.pth" --batch_size 10
+elif [[ $mode == 'pgd_source_robustness_sample' ]] || [[ $mode == 'pgd_target_robustness_sample' ]]
+then
+    python main.py --method $mode --pgd_mimic "samples/james.jpg" --epochs 50 
 elif [[ $mode == 'gan_source_robustness_sample' ]] || [[ $mode == 'gan_target_robustness_sample' ]]
 then
     # python main.py --method $mode --gan_test_models "gan_source.pth"
