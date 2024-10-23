@@ -44,9 +44,9 @@ elif [[ $mode == 'gan_source_robustness_sample' ]] || [[ $mode == 'gan_target_ro
 then
     # python main.py --method $mode --gan_test_models "gan_source.pth"
     python main.py --method $mode --gan_test_models "gan_target.pth"
-elif [[ $mode == 'gan_source_robustness_metric' ]] || [[ $mode == 'gan_target_robustness_metric' ]]
+elif [[ $mode == 'gan_source_metric' ]] || [[ $mode == 'gan_source_robustness_metric' ]] || [[ $mode == 'gan_target_robustness_metric' ]]
 then
-    python main.py --method $mode --gan_test_models "gan_target.pth" --batch_size 10
+    python main.py --method $mode --gan_test_models "gan_source.pth" --batch_size 27
 elif [[ $mode == 'test' ]]
 then
     python main.py --method $mode
