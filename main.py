@@ -41,11 +41,13 @@ def main():
         "pgd_target_metric": defense.pgd_target_metric,
         "pgd_source_robustness_sample": defense.pgd_source_robustness_sample,
         "pgd_target_robustness_sample": defense.pgd_target_robustness_sample,
+        "pgd_source_robustness_metric": defense.pgd_source_robustness_metric,
+        "pgd_target_robustness_metric": defense.pgd_target_robustness_metric,
         "gan_source_sample": defense.gan_source_sample,
         "gan_source_metric": defense.gan_source_metric,
         "gan_source_robustness_sample": defense.gan_source_robustness_sample,
-        "gan_source_robustness_metric": defense.gan_source_robustness_metric,
         "gan_target_robustness_sample": defense.gan_target_robustness_sample,
+        "gan_source_robustness_metric": defense.gan_source_robustness_metric,
         "gan_target_robustness_metric": defense.gan_target_robustness_metric,
     }
 
