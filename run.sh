@@ -37,12 +37,22 @@ then
 elif [[ $mode == 'pgd_source_sample' ]] || [[ $mode == 'pgd_source_robustness_sample' ]]
 then
     python main.py --method $mode --pgd_mimic "samples/james.jpg" --epochs 75 --pgd_epsilon 0.05 --pgd_limit 0.25
+elif [[ $mode == 'pgd_target_sample' ]] || [[ $mode == 'pgd_target_robustness_sample' ]]
+then
+    python main.py --method $mode --pgd_mimic "samples/james.jpg" --epochs 30 --pgd_epsilon 0.05 --pgd_limit 0.05
 elif [[ $mode == 'pgd_source_metric' ]]
 then
-    python main.py --method $mode --pgd_mimic "samples/zjl.jpg" --epochs 75 --pgd_epsilon 0.05 --pgd_limit 0.25 --batch_size 50
-elif [[ $mode == 'gan_source_robustness_sample' ]] || [[ $mode == 'gan_target_robustness_sample' ]]
+    python main.py --method $mode --pgd_mimic "samples/james.jpg" --epochs 75 --pgd_epsilon 0.05 --pgd_limit 0.25 --batch_size 27
+elif [[ $mode == 'pgd_target_metric' ]]
+then
+    python main.py --method $mode --pgd_mimic "samples/james.jpg" --epochs 30 --pgd_epsilon 0.05 --pgd_limit 0.05 --batch_size 27
+elif [[ $mode == 'gan_source_sample' ]] || [[ $mode == 'gan_source_robustness_sample' ]] || [[ $mode == 'gan_target_robustness_sample' ]]
 then
     # python main.py --method $mode --gan_test_models "gan_source.pth"
+    # python main.py --method $mode --gan_test_models "gan_source_no_RGB.pth"
+    # python main.py --method $mode --gan_test_models "gan_source_no_middle.pth"
+    # python main.py --method $mode --gan_test_models "gan_source_no_result.pth"
+    # python main.py --method $mode --gan_test_models "gan_source_no_all.pth"
     python main.py --method $mode --gan_test_models "gan_target.pth"
 elif [[ $mode == 'gan_source_metric' ]] || [[ $mode == 'gan_source_robustness_metric' ]] || [[ $mode == 'gan_target_robustness_metric' ]]
 then
