@@ -61,9 +61,9 @@ then
     python main.py --method $mode --gan_test_models "gan_target_no_middle.pth"
     python main.py --method $mode --gan_test_models "gan_target_no_result.pth"
     python main.py --method $mode --gan_test_models "gan_target_no_all.pth"
-elif [[ $mode == 'gan_source_metric' ]] || [[ $mode == 'gan_source_robustness_metric' ]] || [[ $mode == 'gan_target_robustness_metric' ]]
+elif [[ $mode == 'gan_source_metric' ]] || [[ $mode == 'gan_target_metric' ]] || [[ $mode == 'gan_source_robustness_metric' ]] || [[ $mode == 'gan_target_robustness_metric' ]]
 then
-    python main.py --method $mode --gan_test_models "gan_source_no_all.pth" --batch_size 20
+    python main.py --method $mode --gan_test_models "gan_target_no_all.pth" --batch_size 25
 elif [[ $mode == 'test' ]]
 then
     python main.py --method $mode

@@ -1613,31 +1613,6 @@ class SimSwapDefense(nn.Module):
         self.target.cuda().eval()
         self.GAN_G.cuda().eval()
 
-        source_path = [
-            join(self.samples_dir, "zrf.jpg"),
-            join(self.samples_dir, "zrf.jpg"),
-            join(self.samples_dir, "zrf.jpg"),
-        ]
-        target_path = [
-            join(self.samples_dir, "zjl.jpg"),
-            join(self.samples_dir, "6.jpg"),
-            join(self.samples_dir, "hzxc.jpg"),
-        ]
-
-        source_imgs = self._load_imgs(source_path)
-        target_imgs = self._load_imgs(target_path)
-        source_identity = self._get_imgs_identity(source_imgs)
-        swap_imgs = self.target(None, target_imgs, source_identity, None, True)
-
-        pert_target_imgs = self.GAN_G(target_imgs)
-        pert_swap_imgs = self.target(
-            None, pert_target_imgs, source_identity, None, True
-        )
-
-        self._save_imgs(
-            [source_imgs, target_imgs, swap_imgs, pert_target_imgs, pert_swap_imgs]
-        )
-
         source_imgs_path, target_imgs_path = self._get_split_test_imgs_path()
         data = {
             "pert_mse": [],

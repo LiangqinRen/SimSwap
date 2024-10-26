@@ -47,6 +47,7 @@ def main():
         "gan_source_sample": defense.gan_source_sample,
         "gan_target_sample": defense.gan_target_sample,
         "gan_source_metric": defense.gan_source_metric,
+        "gan_target_metric": defense.gan_target_metric,
         "gan_source_robustness_sample": defense.gan_source_robustness_sample,
         "gan_target_robustness_sample": defense.gan_target_robustness_sample,
         "gan_source_robustness_metric": defense.gan_source_robustness_metric,
