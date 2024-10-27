@@ -21,7 +21,7 @@ def main():
         # "pgd_source_single": defense.pgd_source_single,
         # "pgd_source_multi": defense.pgd_source_multiple,
         # "pgd_source_metric": defense.pgd_source_metric,
-        # "pgd_source_distance": defense.pgd_source_distance,
+        #
         # "pgd_target_single": defense.pgd_target_single,
         # "pgd_target_multi": defense.pgd_target_multiple,
         # "pgd_target_metric": defense.pgd_target_metric,
@@ -35,6 +35,7 @@ def main():
         # "pgd_target_robustness_sample": defense.pgd_target_robustness_sample,
         # "pgd_target_robustness_metric": defense.pgd_target_robustness_metric,
         #
+        "pgd_source_distance": defense.pgd_source_distance,
         "pgd_source_sample": defense.pgd_source_sample,
         "pgd_target_sample": defense.pgd_target_sample,
         "pgd_source_metric": defense.pgd_source_metric,

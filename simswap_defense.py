@@ -280,12 +280,12 @@ class SimSwapDefense(nn.Module):
 
         source_path = [
             join(self.samples_dir, "zjl.jpg"),
-            join(self.samples_dir, "6.jpg"),
-            join(self.samples_dir, "hzxc.jpg"),
+            # join(self.samples_dir, "6.jpg"),
+            # join(self.samples_dir, "hzxc.jpg"),
         ]
         target_path = [
-            join(self.samples_dir, "zrf.jpg"),
-            join(self.samples_dir, "zrf.jpg"),
+            # join(self.samples_dir, "zrf.jpg"),
+            # join(self.samples_dir, "zrf.jpg"),
             join(self.samples_dir, "zrf.jpg"),
         ]
 
@@ -366,8 +366,23 @@ class SimSwapDefense(nn.Module):
             mimic_img_expand,
         )
 
+        (
+            source_to_swap_dist,
+            target_to_swap_dist,
+            anchor_to_swap_dist,
+        ) = self._calculate_distance(
+            source_imgs, target_imgs, mimic_img_expand, source_swap_imgs
+        )
+        (
+            source_to_pert_swap_dist,
+            target_to_pert_swap_dist,
+            anchor_to_pert_swap_dist,
+        ) = self._calculate_distance(
+            source_imgs, target_imgs, mimic_img_expand, x_swap_imgs
+        )
+
         self.logger.info(
-            f"pert(mse, psnr, ssim): ({pert_mse:.5f}, {pert_psnr:.5f}, {pert_ssim:.5f}). pert swap(mse, psnr, ssim): ({pert_swap_mse:.5f}, {pert_swap_psnr:.5f}, {pert_swap_ssim:.5f}). effectiveness(pert, swap, pert swap, anchor): ({pert_effectiveness:.5f}, {swap_effectiveness:.5f}, {pert_swap_effectiveness:.5f}, {anchor_effectiveness:.5f})"
+            f"pert(mse, psnr, ssim): ({pert_mse:.5f}, {pert_psnr:.5f}, {pert_ssim:.5f}). pert swap(mse, psnr, ssim): ({pert_swap_mse:.5f}, {pert_swap_psnr:.5f}, {pert_swap_ssim:.5f}). effectiveness(pert, swap, pert swap, anchor): ({pert_effectiveness:.5f}, {swap_effectiveness:.5f}, {pert_swap_effectiveness:.5f}, {anchor_effectiveness:.5f}), distance(swap to source, target, anchor): ({source_to_swap_dist:.5f}, {target_to_swap_dist:.5f}, {anchor_to_swap_dist:.5f}), distance(pert swap to source, target, anchor): ({source_to_pert_swap_dist:.5f}, {target_to_pert_swap_dist:.5f}, {anchor_to_pert_swap_dist:.5f})"
         )
 
     def pgd_target_sample(self, loss_weights=[5000, 1]):
@@ -2069,7 +2084,7 @@ class SimSwapDefense(nn.Module):
             effectiveness["compress"] += compress_effec
             del compress_imgs, compress_identity, compress_swap_imgs
 
-            rotate_imgs = self.__rotate(x_imgs, random.random() * 360)
+            rotate_imgs = self.__rotate(rotate_angle)
             rotate_identity = self._get_imgs_identity(rotate_imgs)
             rotate_swap_imgs = self.target(
                 None, target_imgs, rotate_identity, None, True
@@ -2709,6 +2724,7 @@ class SimSwapDefense(nn.Module):
         gauss_mean, gauss_std = 0, 0.1
         gauss_size, gauss_sigma = 5, 3.0
         jpeg_ratio = 70
+        rotate_angle = 60
 
         model_path = join("checkpoints", self.args.gan_test_models)
         self.GAN_G.load_state_dict(torch.load(model_path)["GAN_G_state_dict"])
@@ -2819,7 +2835,7 @@ class SimSwapDefense(nn.Module):
             effectiveness["compress"] += compress_effec
             del compress_imgs, compress_identity, compress_swap_imgs
 
-            rotate_imgs = self.__rotate(pert_imgs, random.random() * 360)
+            rotate_imgs = self.__rotate(pert_imgs, rotate_angle)
             rotate_identity = self._get_imgs_identity(rotate_imgs)
             rotate_swap_imgs = self.target(
                 None, target_imgs, rotate_identity, None, True
@@ -2857,6 +2873,7 @@ class SimSwapDefense(nn.Module):
         gauss_mean, gauss_std = 0, 0.1
         gauss_size, gauss_sigma = 5, 3.0
         jpeg_ratio = 70
+        rotate_angle = 60
 
         model_path = join("checkpoints", self.args.gan_test_models)
         self.GAN_G.load_state_dict(torch.load(model_path)["GAN_G_state_dict"])
@@ -2895,6 +2912,7 @@ class SimSwapDefense(nn.Module):
             swap_imgs = self.target(None, target_imgs, source_identity, None, True)
 
             pert_imgs = self.GAN_G(target_imgs)
+            pert_swap_imgs = self.target(None, pert_imgs, source_identity, None, True)
 
             noise_imgs = self.__gauss_noise(pert_imgs, gauss_mean, gauss_std)
             noise_swap_imgs = self.target(None, noise_imgs, source_identity, None, True)
@@ -2916,7 +2934,6 @@ class SimSwapDefense(nn.Module):
                 source_imgs, noise_swap_imgs
             )
             effectiveness["noise"] += noise_effec
-            del noise_imgs, noise_swap_imgs
 
             blur_imgs = self.__gauss_blur(pert_imgs, gauss_size, gauss_sigma)
             blur_swap_imgs = self.target(None, blur_imgs, source_identity, None, True)
@@ -2938,7 +2955,6 @@ class SimSwapDefense(nn.Module):
                 source_imgs, blur_swap_imgs
             )
             effectiveness["blur"] += blur_effec
-            del blur_imgs, blur_swap_imgs
 
             compress_imgs = self.__jpeg_compress(pert_imgs, jpeg_ratio)
             compress_swap_imgs = self.target(
@@ -2962,9 +2978,8 @@ class SimSwapDefense(nn.Module):
                 source_imgs, compress_swap_imgs
             )
             effectiveness["compress"] += compress_effec
-            del compress_imgs, compress_swap_imgs
 
-            rotate_imgs = self.__rotate(pert_imgs, random.random() * 360)
+            rotate_imgs = self.__rotate(pert_imgs, rotate_angle)
             rotate_swap_imgs = self.target(
                 None, rotate_imgs, source_identity, None, True
             )
@@ -2986,13 +3001,41 @@ class SimSwapDefense(nn.Module):
                 source_imgs, rotate_swap_imgs
             )
             effectiveness["rotate"] += rotate_effec
-            del rotate_imgs, rotate_swap_imgs
 
             torch.cuda.empty_cache()
             self.logger.info(
-                f"Iter {i:5}/{total_batch:5}, noise, blur, compress, rotate(mse, psnr, ssim, effectiveness): ({noise_mse:.3f}, {noise_psnr:.3f}, {noise_ssim:.3f}, {noise_effec:.3f}), ({blur_mse:.3f}, {blur_psnr:.3f}, {blur_ssim:.3f}, {blur_effec:.3f}), ({compress_mse:.3f}, {compress_psnr:.3f}, {compress_ssim:.3f}, {compress_effec:.3f}), ({rotate_mse:.3f}, {rotate_psnr:.3f}, {rotate_ssim:.3f}, {rotate_effec:.3f})"
+                f"Iter {i:5}/{total_batch:5}, compress, noise, rotate, blur(mse, psnr, ssim, effectiveness): ({compress_mse:.3f}, {compress_psnr:.3f}, {compress_ssim:.3f}, {compress_effec:.3f}), ({noise_mse:.3f}, {noise_psnr:.3f}, {noise_ssim:.3f}, {noise_effec:.3f}),  ({rotate_mse:.3f}, {rotate_psnr:.3f}, {rotate_ssim:.3f}, {rotate_effec:.3f}), ({blur_mse:.3f}, {blur_psnr:.3f}, {blur_ssim:.3f}, {blur_effec:.3f})"
             )
 
             self.logger.info(
-                f"Average of {self.args.batch_size * (i + 1)} pictures, noise, blur, compress, rotate(mse, psnr, ssim, effectiveness): ({utility['noise'][0]/total_batch:.3f}, {utility['noise'][1]/total_batch:.3f}, {utility['noise'][2]/total_batch:.3f}, {effectiveness['noise']/total_batch:.3f}), ({utility['blur'][0]/total_batch:.3f}, {utility['blur'][1]/total_batch:.3f}, {utility['blur'][2]/total_batch:.3f}, {effectiveness['blur']/total_batch:.3f}), ({utility['compress'][0]/total_batch:.3f}, {utility['compress'][1]/total_batch:.3f}, {utility['compress'][2]/total_batch:.3f}, {effectiveness['compress']/total_batch:.3f}), ({utility['rotate'][0]/total_batch:.3f}, {utility['rotate'][1]/total_batch:.3f}, {utility['rotate'][2]/total_batch:.3f}, {effectiveness['rotate']/total_batch:.3f})"
+                f"Average of {self.args.batch_size * (i + 1)} pictures, compress, noise, rotate, blur(mse, psnr, ssim, effectiveness): ({utility['compress'][0]/total_batch:.3f}, {utility['compress'][1]/total_batch:.3f}, {utility['compress'][2]/total_batch:.3f}, {effectiveness['compress']/total_batch:.3f}), ({utility['noise'][0]/total_batch:.3f}, {utility['noise'][1]/total_batch:.3f}, {utility['noise'][2]/total_batch:.3f}, {effectiveness['noise']/total_batch:.3f}), ({utility['rotate'][0]/total_batch:.3f}, {utility['rotate'][1]/total_batch:.3f}, {utility['rotate'][2]/total_batch:.3f}, {effectiveness['rotate']/total_batch:.3f}), ({utility['blur'][0]/total_batch:.3f}, {utility['blur'][1]/total_batch:.3f}, {utility['blur'][2]/total_batch:.3f}, {effectiveness['blur']/total_batch:.3f})"
             )
+
+            if i % self.args.log_interval == 0:
+                results = torch.cat(
+                    source_imgs,
+                    target_imgs,
+                    swap_imgs,
+                    pert_imgs,
+                    pert_swap_imgs,
+                    noise_imgs,
+                    noise_swap_imgs,
+                    blur_imgs,
+                    blur_swap_imgs,
+                    compress_imgs,
+                    compress_swap_imgs,
+                    rotate_imgs,
+                    rotate_swap_imgs,
+                )
+                save_image(
+                    results,
+                    join(self.args.log_dir, "image", f"summary_{i}.png"),
+                    nrow=self.args.batch_size,
+                )
+                del results
+
+            del source_imgs, target_imgs, swap_imgs, pert_imgs, pert_swap_imgs
+            del noise_imgs, noise_swap_imgs
+            del blur_imgs, blur_swap_imgs
+            del compress_imgs, compress_swap_imgs
+            del rotate_imgs, rotate_swap_imgs
