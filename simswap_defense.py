@@ -1462,6 +1462,58 @@ class SimSwapDefense(nn.Module):
             f"pert utility(mse, psnr, ssim): {pert_mse:.3f} {pert_psnr:.3f} {pert_ssim:.3f}, pert swap utility(mse, psnr, ssim): {pert_swap_mse:.3f} {pert_swap_psnr:.3f} {pert_swap_ssim:.3f}, effectiveness (pert, clean swap, pert swap): {pert_effectiveness:.3f}, {swap_effectiveness:.3f}, {pert_swap_effectiveness:.3f}"
         )
 
+    def gan_target_sample(self):
+        model_path = join("checkpoints", self.args.gan_test_models)
+        self.GAN_G.load_state_dict(torch.load(model_path)["GAN_G_state_dict"])
+
+        self.target.cuda().eval()
+        self.GAN_G.cuda().eval()
+
+        source_path = [
+            join(self.samples_dir, "zrf.jpg"),
+            join(self.samples_dir, "zrf.jpg"),
+            join(self.samples_dir, "zrf.jpg"),
+        ]
+        target_path = [
+            join(self.samples_dir, "zjl.jpg"),
+            join(self.samples_dir, "6.jpg"),
+            join(self.samples_dir, "hzxc.jpg"),
+        ]
+
+        source_imgs = self._load_imgs(source_path)
+        target_imgs = self._load_imgs(target_path)
+        source_identity = self._get_imgs_identity(source_imgs)
+        swap_imgs = self.target(None, target_imgs, source_identity, None, True)
+
+        pert_target_imgs = self.GAN_G(target_imgs)
+        pert_swap_imgs = self.target(
+            None, pert_target_imgs, source_identity, None, True
+        )
+
+        self.__save_gan_samples(
+            [source_imgs, target_imgs, swap_imgs, pert_target_imgs, pert_swap_imgs]
+        )
+
+        pert_mse, pert_psnr, pert_ssim = self._calculate_utility(
+            target_imgs, pert_target_imgs
+        )
+
+        pert_swap_mse, pert_swap_psnr, pert_swap_ssim = self._calculate_utility(
+            swap_imgs, pert_swap_imgs
+        )
+
+        (
+            pert_effectiveness,
+            swap_effectiveness,
+            pert_swap_effectiveness,
+        ) = self._calculate_effectiveness(
+            source_imgs, target_imgs, pert_target_imgs, swap_imgs, pert_swap_imgs
+        )
+
+        self.logger.info(
+            f"pert utility(mse, psnr, ssim): {pert_mse:.3f} {pert_psnr:.3f} {pert_ssim:.3f}, pert swap utility(mse, psnr, ssim): {pert_swap_mse:.3f} {pert_swap_psnr:.3f} {pert_swap_ssim:.3f}, effectiveness (pert, clean swap, pert swap): {pert_effectiveness:.3f}, {swap_effectiveness:.3f}, {pert_swap_effectiveness:.3f}"
+        )
+
     def gan_source_metric(self):
         model_path = join("checkpoints", self.args.gan_test_models)
         self.GAN_G.load_state_dict(torch.load(model_path)["GAN_G_state_dict"])
