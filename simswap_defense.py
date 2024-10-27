@@ -3008,24 +3008,27 @@ class SimSwapDefense(nn.Module):
             )
 
             self.logger.info(
-                f"Average of {self.args.batch_size * (i + 1)} pictures, compress, noise, rotate, blur(mse, psnr, ssim, effectiveness): ({utility['compress'][0]/total_batch:.3f}, {utility['compress'][1]/total_batch:.3f}, {utility['compress'][2]/total_batch:.3f}, {effectiveness['compress']/total_batch:.3f}), ({utility['noise'][0]/total_batch:.3f}, {utility['noise'][1]/total_batch:.3f}, {utility['noise'][2]/total_batch:.3f}, {effectiveness['noise']/total_batch:.3f}), ({utility['rotate'][0]/total_batch:.3f}, {utility['rotate'][1]/total_batch:.3f}, {utility['rotate'][2]/total_batch:.3f}, {effectiveness['rotate']/total_batch:.3f}), ({utility['blur'][0]/total_batch:.3f}, {utility['blur'][1]/total_batch:.3f}, {utility['blur'][2]/total_batch:.3f}, {effectiveness['blur']/total_batch:.3f})"
+                f"Average of {self.args.batch_size * (i + 1)} pictures, compress, noise, rotate, blur(mse, psnr, ssim, effectiveness): ({utility['compress'][0]/(i + 1):.3f}, {utility['compress'][1]/(i + 1):.3f}, {utility['compress'][2]/(i + 1):.3f}, {effectiveness['compress']/(i + 1):.3f}), ({utility['noise'][0]/(i + 1):.3f}, {utility['noise'][1]/(i + 1):.3f}, {utility['noise'][2]/(i + 1):.3f}, {effectiveness['noise']/(i + 1):.3f}), ({utility['rotate'][0]/(i + 1):.3f}, {utility['rotate'][1]/(i + 1):.3f}, {utility['rotate'][2]/(i + 1):.3f}, {effectiveness['rotate']/(i + 1):.3f}), ({utility['blur'][0]/(i + 1):.3f}, {utility['blur'][1]/(i + 1):.3f}, {utility['blur'][2]/(i + 1):.3f}, {effectiveness['blur']/(i + 1):.3f})"
             )
 
             if i % self.args.log_interval == 0:
                 results = torch.cat(
-                    source_imgs,
-                    target_imgs,
-                    swap_imgs,
-                    pert_imgs,
-                    pert_swap_imgs,
-                    noise_imgs,
-                    noise_swap_imgs,
-                    blur_imgs,
-                    blur_swap_imgs,
-                    compress_imgs,
-                    compress_swap_imgs,
-                    rotate_imgs,
-                    rotate_swap_imgs,
+                    (
+                        source_imgs,
+                        target_imgs,
+                        swap_imgs,
+                        pert_imgs,
+                        pert_swap_imgs,
+                        compress_imgs,
+                        compress_swap_imgs,
+                        noise_imgs,
+                        noise_swap_imgs,
+                        rotate_imgs,
+                        rotate_swap_imgs,
+                        blur_imgs,
+                        blur_swap_imgs,
+                    ),
+                    dim=0,
                 )
                 save_image(
                     results,
@@ -3035,7 +3038,7 @@ class SimSwapDefense(nn.Module):
                 del results
 
             del source_imgs, target_imgs, swap_imgs, pert_imgs, pert_swap_imgs
-            del noise_imgs, noise_swap_imgs
-            del blur_imgs, blur_swap_imgs
             del compress_imgs, compress_swap_imgs
+            del noise_imgs, noise_swap_imgs
             del rotate_imgs, rotate_swap_imgs
+            del blur_imgs, blur_swap_imgs

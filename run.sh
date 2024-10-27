@@ -60,7 +60,7 @@ then
 elif [[ $mode == 'gan_source_metric' ]] || [[ $mode == 'gan_target_metric' ]] || [[ $mode == 'gan_source_robustness_metric' ]] || [[ $mode == 'gan_target_robustness_metric' ]]
 then
     # python main.py --method $mode --gan_test_models "gan_source.pth" --batch_size 50 --log_interval 10
-    python main.py --method $mode --gan_test_models "gan_target.pth" --batch_size 50 --log_interval 10
+    python main.py --method $mode --gan_test_models "gan_target.pth" --batch_size 20 --log_interval 10
 elif [[ $mode == 'test' ]]
 then
     python main.py --method $mode
