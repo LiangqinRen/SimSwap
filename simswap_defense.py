@@ -479,6 +479,88 @@ class SimSwapDefense(nn.Module):
             f"pert(mse, psnr, ssim): ({pert_mse:.5f}, {pert_psnr:.5f}, {pert_ssim:.5f}). pert swap(mse, psnr, ssim): ({pert_swap_mse:.5f}, {pert_swap_psnr:.5f}, {pert_swap_ssim:.5f}). effectiveness(pert, swap, pert swap, anchor): ({pert_effectiveness:.5f}, {swap_effectiveness:.5f}, {pert_swap_effectiveness:.5f})"
         )
 
+    def pgd_both_sample(self, loss_weights=[10, 3000, 0.001]) -> None:
+        self.logger.info(f"loss_weights: {loss_weights}")
+
+        self.target.cuda().eval()
+        l2_loss = nn.MSELoss().cuda()
+
+        protect_path = [
+            join(self.samples_dir, "zjl.jpg"),
+            join(self.samples_dir, "6.jpg"),
+            join(self.samples_dir, "hzxc.jpg"),
+        ]
+
+        mimic_img = self._load_imgs([join(self.args.data_dir, self.args.pgd_mimic)])
+        mimic_img_expand = mimic_img.repeat(len(protect_path), 1, 1, 1)
+        mimic_identity_expand = self._get_imgs_identity(mimic_img_expand)
+
+        protect_imgs = self._load_imgs(protect_path)
+        x_imgs = protect_imgs.clone().detach()
+        epsilon = (
+            self.args.pgd_epsilon
+            * (torch.max(protect_imgs) - torch.min(protect_imgs))
+            / 2
+        )
+        for epoch in range(self.args.epochs):
+            x_imgs.requires_grad = True
+
+            x_identity = self._get_imgs_identity(x_imgs)
+            identity_diff_loss = l2_loss(x_identity, mimic_identity_expand.detach())
+            x_latent_code = self.target.netG.encoder(x_imgs)
+            mimic_latent_code = self.target.netG.encoder(mimic_img_expand)
+
+            pert_diff_loss = l2_loss(x_imgs, protect_imgs.detach())
+            identity_diff_loss = l2_loss(x_identity, mimic_identity_expand.detach())
+            latent_code_diff_loss = l2_loss(x_latent_code, mimic_latent_code.detach())
+
+            loss = (
+                loss_weights[0] * pert_diff_loss
+                + loss_weights[1] * identity_diff_loss
+                - loss_weights[2] * latent_code_diff_loss
+            )
+
+            loss.backward(retain_graph=True)
+
+            x_imgs = (
+                x_imgs.clone().detach() - epsilon * x_imgs.grad.sign().clone().detach()
+            )
+            x_imgs = torch.clamp(
+                x_imgs,
+                min=protect_imgs - self.args.pgd_limit,
+                max=protect_imgs + self.args.pgd_limit,
+            )
+            self.logger.info(
+                f"[Epoch {epoch:4}]loss: {loss:.5f}({loss_weights[0] * pert_diff_loss.item():.5f}, {loss_weights[1] * identity_diff_loss.item():.5f}, {loss_weights[2] * latent_code_diff_loss.item():.5f})"
+            )
+
+        other_path = [
+            join(self.samples_dir, "zrf.jpg"),
+            join(self.samples_dir, "zrf.jpg"),
+            join(self.samples_dir, "zrf.jpg"),
+        ]
+        other_imgs = self._load_imgs(other_path)
+        other_identity = self._get_imgs_identity(other_imgs)
+
+        x_identity = self._get_imgs_identity(x_imgs)
+        protect_as_source_swap = self.target(None, other_imgs, x_identity, None, True)
+        protect_as_target_swap = self.target(None, x_imgs, other_identity, None, True)
+        results = torch.cat(
+            (
+                protect_imgs,
+                other_imgs,
+                x_imgs,
+                protect_as_source_swap,
+                protect_as_target_swap,
+            ),
+            dim=0,
+        )
+        save_image(
+            results,
+            join(self.args.log_dir, "image", f"summary.png"),
+            nrow=len(protect_path),
+        )
+
     def _get_random_imgs_path(self) -> tuple[list[str], list[str]]:
         people = sorted(os.listdir(self.dataset_dir))
         random.shuffle(people)

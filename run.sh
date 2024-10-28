@@ -34,6 +34,9 @@ then
 # elif [[ $mode == 'gan_source_metric' ]]
 # then
 #     python main.py --method $mode --gan_test_models "gan_src.pth" --batch_size 10
+elif [[ $mode == 'pgd_both_sample' ]]
+then
+    python main.py --method $mode --epochs 75 --pgd_epsilon 0.01 --pgd_limit 0.1 --pgd_mimic "samples/james.jpg"
 elif [[ $mode == 'pgd_source_distance' ]]
 then
     python main.py --method $mode --pgd_mimic "samples/zjl.jpg" --batch_size 50 --epochs 75 --pgd_epsilon 0.05 --pgd_limit 0.25 --log_interval 10
@@ -66,7 +69,7 @@ then
     python main.py --method $mode --gan_test_models "gan_target_no_all.pth" --batch_size 25
 elif [[ $mode == 'test' ]]
 then
-    python main.py --method $mode
+    python main.py --method $mode --epochs 75 --pgd_epsilon 0.01 --pgd_limit 0.1 --pgd_mimic "samples/james.jpg"
 else
     echo "Unrecognized mode!"
 fi
