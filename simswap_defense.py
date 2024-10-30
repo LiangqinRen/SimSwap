@@ -1790,14 +1790,14 @@ class SimSwapDefense(nn.Module):
 
         self.GAN_G.load_state_dict(self.target.netG.state_dict(), strict=False)
         optimizer_G = optim.Adam(
-            # [
-            #     {"params": self.GAN_G.up1.parameters()},
-            #     {"params": self.GAN_G.up2.parameters()},
-            #     {"params": self.GAN_G.up3.parameters()},
-            #     {"params": self.GAN_G.up4.parameters()},
-            #     {"params": self.GAN_G.last_layer.parameters()},
-            # ],
-            self.GAN_G.parameters(),
+            [
+                {"params": self.GAN_G.up1.parameters()},
+                {"params": self.GAN_G.up2.parameters()},
+                {"params": self.GAN_G.up3.parameters()},
+                {"params": self.GAN_G.up4.parameters()},
+                {"params": self.GAN_G.last_layer.parameters()},
+            ],
+            # self.GAN_G.parameters(),
             lr=self.args.gan_generator_lr,
             betas=(0.5, 0.999),
         )
@@ -1807,16 +1807,16 @@ class SimSwapDefense(nn.Module):
         l2_loss = nn.MSELoss().cuda()
         flatten = nn.Flatten().cuda()
 
-        # for param in self.GAN_G.first_layer.parameters():
-        #     param.requires_grad = False
-        # for param in self.GAN_G.down1.parameters():
-        #     param.requires_grad = False
-        # for param in self.GAN_G.down2.parameters():
-        #     param.requires_grad = False
-        # for param in self.GAN_G.down3.parameters():
-        #     param.requires_grad = False
-        # for param in self.GAN_G.down4.parameters():
-        #     param.requires_grad = False
+        for param in self.GAN_G.first_layer.parameters():
+            param.requires_grad = False
+        for param in self.GAN_G.down1.parameters():
+            param.requires_grad = False
+        for param in self.GAN_G.down2.parameters():
+            param.requires_grad = False
+        for param in self.GAN_G.down3.parameters():
+            param.requires_grad = False
+        for param in self.GAN_G.down4.parameters():
+            param.requires_grad = False
 
         checkpoint_dir = join(self.args.log_dir, "checkpoint")
         os.mkdir(checkpoint_dir)
@@ -1944,7 +1944,9 @@ class SimSwapDefense(nn.Module):
 
             if G_loss.data < best_loss:
                 best_loss = G_loss.data
-                log_save_path = join(self.args.log_dir, "checkpoint", "gan_both.pth")
+                log_save_path = join(
+                    self.args.log_dir, "checkpoint", "gan_both_partial.pth"
+                )
                 torch.save(
                     {
                         "epoch": epoch,
