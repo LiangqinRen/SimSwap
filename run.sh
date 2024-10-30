@@ -34,6 +34,9 @@ then
 # elif [[ $mode == 'gan_source_metric' ]]
 # then
 #     python main.py --method $mode --gan_test_models "gan_src.pth" --batch_size 10
+elif [[ $mode == 'gan_both_train' ]]
+then
+    python main.py --method $mode --pgd_mimic "samples/zjl.jpg" --batch_size 8 --log_interval 5
 elif [[ $mode == 'pgd_both_sample' ]]
 then
     python main.py --method $mode --epochs 75 --pgd_epsilon 0.01 --pgd_limit 0.1 --pgd_mimic "samples/james.jpg"

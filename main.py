@@ -35,6 +35,7 @@ def main():
         # "pgd_target_robustness_sample": defense.pgd_target_robustness_sample,
         # "pgd_target_robustness_metric": defense.pgd_target_robustness_metric,
         #
+        "gan_both_train": defense.gan_both_train,
         "pgd_source_distance": defense.pgd_source_distance,
         "pgd_source_sample": defense.pgd_source_sample,
         "pgd_target_sample": defense.pgd_target_sample,

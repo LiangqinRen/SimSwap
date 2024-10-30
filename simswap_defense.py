@@ -51,7 +51,7 @@ class SimSwapDefense(nn.Module):
             0.1,
             0.025,
         ]  # pert, swap diff, latent diff, rotate latent diff
-
+        # 45, 15, 0.1 ,10
         self.target = create_model(TestOptions().parse())
         self.GAN_G = Generator(input_nc=3, output_nc=3, epsilon=self.gan_rgb_limits)
 
@@ -1779,6 +1779,180 @@ class SimSwapDefense(nn.Module):
             self.logger.info(
                 f"Average of {self.args.batch_size * (i+1)} pictures: pert utility(mse, psnr, ssim): {sum(data['pert_mse'])/len(data['pert_mse']):.3f} {sum(data['pert_psnr'])/len(data['pert_psnr']):.3f} {sum(data['pert_ssim'])/len(data['pert_ssim']):.3f}, pert swap utility(mse, psnr, ssim): {sum(data['pert_swap_mse'])/len(data['pert_swap_mse']):.3f} {sum(data['pert_swap_psnr'])/len(data['pert_swap_psnr']):.3f} {sum(data['pert_swap_ssim'])/len(data['pert_swap_ssim']):.3f}, effectiveness(pert, swap, pert swap, anchor): {sum(data['pert_effectiveness'])/len(data['pert_effectiveness']):.3f}, {sum(data['swap_effectiveness'])/len(data['swap_effectiveness']):.3f}, {sum(data['pert_swap_effectiveness'])/len(data['pert_swap_effectiveness']):.3f}"
             )
+
+    def gan_both_train(self):
+        loss_weights = {"pert": 45, "identity": 15, "latent": 0.1, "result": 10}
+        loss_limits = {"latent": 0.1, "result": 0.05}
+
+        self.logger.info(
+            f"rgb_limits: {self.gan_rgb_limits}, loss_weights: {loss_weights}, loss_limits: {loss_limits}"
+        )
+
+        self.GAN_G.load_state_dict(self.target.netG.state_dict(), strict=False)
+        optimizer_G = optim.Adam(
+            # [
+            #     {"params": self.GAN_G.up1.parameters()},
+            #     {"params": self.GAN_G.up2.parameters()},
+            #     {"params": self.GAN_G.up3.parameters()},
+            #     {"params": self.GAN_G.up4.parameters()},
+            #     {"params": self.GAN_G.last_layer.parameters()},
+            # ],
+            self.GAN_G.parameters(),
+            lr=self.args.gan_generator_lr,
+            betas=(0.5, 0.999),
+        )
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer_G, self.args.epochs)
+
+        self.target.cuda().eval()
+        l2_loss = nn.MSELoss().cuda()
+        flatten = nn.Flatten().cuda()
+
+        # for param in self.GAN_G.first_layer.parameters():
+        #     param.requires_grad = False
+        # for param in self.GAN_G.down1.parameters():
+        #     param.requires_grad = False
+        # for param in self.GAN_G.down2.parameters():
+        #     param.requires_grad = False
+        # for param in self.GAN_G.down3.parameters():
+        #     param.requires_grad = False
+        # for param in self.GAN_G.down4.parameters():
+        #     param.requires_grad = False
+
+        checkpoint_dir = join(self.args.log_dir, "checkpoint")
+        os.mkdir(checkpoint_dir)
+
+        best_loss = float("inf")
+        train_imgs_path = self._get_all_imgs_path(train_set=True)
+        test_imgs_path = self._get_all_imgs_path(train_set=False)
+
+        mimic_img = self._load_imgs([join(self.args.data_dir, self.args.pgd_mimic)])
+        mimic_img_expand = mimic_img.repeat(self.args.batch_size, 1, 1, 1)
+        mimic_identity_expand = self._get_imgs_identity(mimic_img_expand)
+        for epoch in range(self.args.epochs):
+            self.GAN_G.cuda().train()
+            src_imgs_path = random.sample(train_imgs_path, self.args.batch_size)
+            tgt_imgs_path = random.sample(train_imgs_path, self.args.batch_size)
+
+            src_imgs = self._load_imgs(src_imgs_path)
+            src_identity = self._get_imgs_identity(src_imgs)
+            tgt_imgs = self._load_imgs(tgt_imgs_path)
+            tgt_swap_imgs = self.target(None, tgt_imgs, src_identity, None, True)
+            tgt_latent_code = self.target.netG.encoder(tgt_swap_imgs)
+
+            pert_src_imgs = self.GAN_G(src_imgs)
+            pert_src_identity = self._get_imgs_identity(pert_src_imgs)
+            pert_swap_imgs = self.target(None, tgt_imgs, pert_src_identity, None, True)
+
+            pert_tgt_imgs = self.GAN_G(tgt_imgs)
+            pert_swap_imgs = self.target(None, pert_tgt_imgs, src_identity, None, True)
+            pert_latent_code = self.target.netG.encoder(pert_tgt_imgs)
+
+            self.GAN_G.zero_grad()
+
+            pert_diff_loss = l2_loss(flatten(pert_src_imgs), flatten(src_imgs))
+            identity_mimic_loss = l2_loss(
+                flatten(pert_src_identity), flatten(mimic_identity_expand)
+            )
+            latent_diff_loss = -torch.clamp(
+                l2_loss(flatten(pert_latent_code), flatten(tgt_latent_code)),
+                0.0,
+                loss_limits["latent"],
+            )
+            swap_diff_loss = -torch.clamp(
+                l2_loss(flatten(pert_swap_imgs), flatten(tgt_swap_imgs)),
+                0.0,
+                loss_limits["result"],
+            )
+
+            G_loss = (
+                loss_weights["pert"] * pert_diff_loss
+                + loss_weights["identity"] * identity_mimic_loss
+                + loss_weights["latent"] * latent_diff_loss
+                + loss_weights["result"] * swap_diff_loss
+            )
+            G_loss.backward(retain_graph=True)
+            optimizer_G.step()
+            scheduler.step()
+
+            self.logger.info(
+                f"[Epoch {epoch:6}]loss: {G_loss:8.5f}({loss_weights['pert'] * pert_diff_loss.item():.5f}, {loss_weights['identity'] * identity_mimic_loss.item():.5f}, {loss_weights['latent'] * latent_diff_loss.item():.5f}, {loss_weights['result'] * swap_diff_loss.item():.5f})({pert_diff_loss.item():.5f}, {identity_mimic_loss.item():.5f}, {latent_diff_loss.item():.5f}, {swap_diff_loss.item():.5f})"
+            )
+
+            if epoch % self.args.log_interval == 0:
+                with torch.no_grad():
+                    self.GAN_G.eval()
+                    self.target.eval()
+
+                    src_imgs_path = random.sample(test_imgs_path, 7)
+                    src_imgs_path.extend(
+                        [
+                            join(self.samples_dir, "zjl.jpg"),
+                            join(self.samples_dir, "6.jpg"),
+                            join(self.samples_dir, "jl.jpg"),
+                        ]
+                    )
+                    tgt_imgs_path = random.sample(test_imgs_path, 7)
+                    tgt_imgs_path.extend(
+                        [
+                            join(self.samples_dir, "zrf.jpg"),
+                            join(self.samples_dir, "zrf.jpg"),
+                            join(self.samples_dir, "zrf.jpg"),
+                        ]
+                    )
+
+                    src_imgs = self._load_imgs(src_imgs_path)
+                    src_identity = self._get_imgs_identity(src_imgs)
+                    tgt_imgs = self._load_imgs(tgt_imgs_path)
+
+                    swap_imgs = self.target(None, tgt_imgs, src_identity, None, True)
+
+                    pert_src_imgs = self.GAN_G(src_imgs)
+                    pert_identity = self._get_imgs_identity(pert_src_imgs)
+                    pert_swap_imgs = self.target(
+                        None, tgt_imgs, pert_identity, None, True
+                    )
+
+                    src_imgs, tgt_imgs = tgt_imgs, src_imgs
+                    src_identity = self._get_imgs_identity(src_imgs)
+                    reverse_swap_imgs = self.target(
+                        None, tgt_imgs, src_identity, None, True
+                    )
+
+                    reverse_pert_src_imgs = self.GAN_G(src_imgs)
+                    pert_identity = self._get_imgs_identity(pert_src_imgs)
+                    reverse_pert_swap_imgs = self.target(
+                        None, tgt_imgs, pert_identity, None, True
+                    )
+
+                    src_imgs, tgt_imgs = tgt_imgs, src_imgs
+                    results = torch.cat(
+                        (
+                            src_imgs,
+                            tgt_imgs,
+                            swap_imgs,
+                            reverse_swap_imgs,
+                            pert_src_imgs,
+                            pert_swap_imgs,
+                            reverse_pert_src_imgs,
+                            reverse_pert_swap_imgs,
+                        ),
+                        dim=0,
+                    )
+
+                    save_path = join(self.args.log_dir, "image", f"gan_src_{epoch}.png")
+                    save_image(results, save_path, nrow=10)
+
+            if G_loss.data < best_loss:
+                best_loss = G_loss.data
+                log_save_path = join(self.args.log_dir, "checkpoint", "gan_both.pth")
+                torch.save(
+                    {
+                        "epoch": epoch,
+                        "GAN_G_state_dict": self.GAN_G.state_dict(),
+                        "GAN_G_loss": G_loss,
+                    },
+                    log_save_path,
+                )
 
     def __gauss_noise(
         self, pert: torch.tensor, gauss_mean: float, gauss_std: float
