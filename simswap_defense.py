@@ -1919,7 +1919,7 @@ class SimSwapDefense(nn.Module):
                     )
 
                     reverse_pert_src_imgs = self.GAN_G(src_imgs)
-                    pert_identity = self._get_imgs_identity(pert_src_imgs)
+                    pert_identity = self._get_imgs_identity(reverse_pert_src_imgs)
                     reverse_pert_swap_imgs = self.target(
                         None, tgt_imgs, pert_identity, None, True
                     )
