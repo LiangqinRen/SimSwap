@@ -1781,8 +1781,8 @@ class SimSwapDefense(nn.Module):
             )
 
     def gan_both_train(self):
-        loss_weights = {"pert": 45, "identity": 15, "latent": 0.1, "result": 10}
-        loss_limits = {"latent": 0.1, "result": 0.05}
+        loss_weights = {"pert": 300, "identity": 300, "latent": 0.1, "result": 0.1}
+        loss_limits = {"latent": 10, "result": 10}
 
         self.logger.info(
             f"rgb_limits: {self.gan_rgb_limits}, loss_weights: {loss_weights}, loss_limits: {loss_limits}"
