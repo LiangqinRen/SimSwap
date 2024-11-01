@@ -39,6 +39,7 @@ def main():
         "pgd_source_sample": defense.pgd_source_sample,
         "pgd_target_sample": defense.pgd_target_sample,
         "pgd_both_sample": defense.pgd_both_sample,
+        "pgd_both_metric": defense.pgd_both_metric,
         "pgd_source_metric": defense.pgd_source_metric,
         "pgd_target_metric": defense.pgd_target_metric,
         "pgd_source_robustness_sample": defense.pgd_source_robustness_sample,

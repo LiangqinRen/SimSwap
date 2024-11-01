@@ -479,7 +479,32 @@ class SimSwapDefense(nn.Module):
             f"pert(mse, psnr, ssim): ({pert_mse:.5f}, {pert_psnr:.5f}, {pert_ssim:.5f}). pert swap(mse, psnr, ssim): ({pert_swap_mse:.5f}, {pert_swap_psnr:.5f}, {pert_swap_ssim:.5f}). effectiveness(pert, swap, pert swap, anchor): ({pert_effectiveness:.5f}, {swap_effectiveness:.5f}, {pert_swap_effectiveness:.5f})"
         )
 
-    def pgd_both_sample(self, loss_weights=[10, 3000, 0.001]) -> None:
+    def __get_face_mask(
+        self, imgs: torch.tensor, face_ratio: int = 0.2
+    ) -> torch.tensor:
+        from facenet_pytorch import MTCNN
+        from PIL import Image
+
+        mtcnn = MTCNN(keep_all=True)
+        mask = torch.ones_like(imgs, dtype=torch.float)
+        for i in range(imgs.shape[0]):
+            single_image = imgs[i]
+            image_pil = Image.fromarray(
+                (single_image.permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
+            )
+
+            boxes, _ = mtcnn.detect(image_pil)
+
+            if boxes is not None:
+                for box in boxes:
+                    x1, y1, x2, y2 = map(int, box)
+                    mask[i, :, y1:y2, x1:x2] = face_ratio
+
+        return mask
+
+    def pgd_both_sample(self) -> None:
+        loss_weights = {"pert": 500, "identity": 1000, "latent": 0.5}
+        loss_limits = {"latent": 10}
         self.logger.info(f"loss_weights: {loss_weights}")
 
         self.target.cuda().eval()
@@ -502,6 +527,7 @@ class SimSwapDefense(nn.Module):
             * (torch.max(protect_imgs) - torch.min(protect_imgs))
             / 2
         )
+        mask = self.__get_face_mask(x_imgs)
         for epoch in range(self.args.epochs):
             x_imgs.requires_grad = True
 
@@ -512,18 +538,23 @@ class SimSwapDefense(nn.Module):
 
             pert_diff_loss = l2_loss(x_imgs, protect_imgs.detach())
             identity_diff_loss = l2_loss(x_identity, mimic_identity_expand.detach())
-            latent_code_diff_loss = l2_loss(x_latent_code, mimic_latent_code.detach())
+            latent_code_diff_loss = torch.clamp(
+                l2_loss(x_latent_code, mimic_latent_code.detach()),
+                0.0,
+                loss_limits["latent"],
+            )
 
             loss = (
-                loss_weights[0] * pert_diff_loss
-                + loss_weights[1] * identity_diff_loss
-                - loss_weights[2] * latent_code_diff_loss
+                loss_weights["pert"] * pert_diff_loss
+                + loss_weights["identity"] * identity_diff_loss
+                - loss_weights["latent"] * latent_code_diff_loss
             )
 
             loss.backward(retain_graph=True)
 
             x_imgs = (
-                x_imgs.clone().detach() - epsilon * x_imgs.grad.sign().clone().detach()
+                x_imgs.clone().detach()
+                - mask * epsilon * x_imgs.grad.sign().clone().detach()
             )
             x_imgs = torch.clamp(
                 x_imgs,
@@ -531,7 +562,7 @@ class SimSwapDefense(nn.Module):
                 max=protect_imgs + self.args.pgd_limit,
             )
             self.logger.info(
-                f"[Epoch {epoch:4}]loss: {loss:.5f}({loss_weights[0] * pert_diff_loss.item():.5f}, {loss_weights[1] * identity_diff_loss.item():.5f}, {loss_weights[2] * latent_code_diff_loss.item():.5f})"
+                f"[Epoch {epoch:4}]loss: {loss:.5f}({loss_weights['pert'] * pert_diff_loss.item():.5f}, {loss_weights['identity'] * identity_diff_loss.item():.5f}, {loss_weights['latent'] * latent_code_diff_loss.item():.5f})"
             )
 
         other_path = [
@@ -560,6 +591,197 @@ class SimSwapDefense(nn.Module):
             join(self.args.log_dir, "image", f"summary.png"),
             nrow=len(protect_path),
         )
+
+    def pgd_both_metric(self) -> None:
+        loss_weights = {"pert": 500, "identity": 1000, "latent": 0.5}
+        loss_limits = {"latent": 10}
+        self.logger.info(f"loss_weights: {loss_weights}")
+
+        self.target.cuda().eval()
+        l2_loss = nn.MSELoss().cuda()
+
+        source_imgs_path, target_imgs_path = self._get_split_test_imgs_path()
+        data = {
+            "pert_utility": (0, 0, 0),
+            "pert_swap_utility": (0, 0, 0),
+            "effectiveness": (0, 0, 0, 0),
+        }
+
+        mimic_img = self._load_imgs([join(self.args.data_dir, self.args.pgd_mimic)])
+        mimic_img_expand = mimic_img.repeat(self.args.batch_size, 1, 1, 1)
+        mimic_identity_expand = self._get_imgs_identity(mimic_img_expand)
+
+        total_batch = (
+            min(len(source_imgs_path), len(target_imgs_path)) // self.args.batch_size
+        )
+        for i in range(total_batch):
+            iter_source_path = source_imgs_path[
+                i * self.args.batch_size : (i + 1) * self.args.batch_size
+            ]
+            iter_target_path = target_imgs_path[
+                i * self.args.batch_size : (i + 1) * self.args.batch_size
+            ]
+
+            source_imgs = self._load_imgs(iter_source_path)
+            target_imgs = self._load_imgs(iter_target_path)
+
+            x_imgs = source_imgs.clone().detach()
+            epsilon = (
+                self.args.pgd_epsilon
+                * (torch.max(source_imgs) - torch.min(source_imgs))
+                / 2
+            )
+            mask = self.__get_face_mask(x_imgs)
+            for epoch in range(self.args.epochs):
+                x_imgs.requires_grad = True
+
+                x_identity = self._get_imgs_identity(x_imgs)
+                identity_diff_loss = l2_loss(x_identity, mimic_identity_expand.detach())
+                x_latent_code = self.target.netG.encoder(x_imgs)
+                mimic_latent_code = self.target.netG.encoder(mimic_img_expand)
+
+                pert_diff_loss = l2_loss(x_imgs, source_imgs.clone().detach())
+                identity_diff_loss = l2_loss(x_identity, mimic_identity_expand.detach())
+                latent_code_diff_loss = torch.clamp(
+                    l2_loss(x_latent_code, mimic_latent_code.detach()),
+                    0.0,
+                    loss_limits["latent"],
+                )
+
+                loss = (
+                    loss_weights["pert"] * pert_diff_loss
+                    + loss_weights["identity"] * identity_diff_loss
+                    - loss_weights["latent"] * latent_code_diff_loss
+                )
+                loss.backward(retain_graph=True)
+
+                x_imgs = (
+                    x_imgs.clone().detach()
+                    - mask * epsilon * x_imgs.grad.sign().clone().detach()
+                )
+                x_imgs = torch.clamp(
+                    x_imgs,
+                    min=source_imgs - self.args.pgd_limit,
+                    max=source_imgs + self.args.pgd_limit,
+                )
+
+                self.logger.info(
+                    f"[Epoch {epoch:4}]loss: {loss:.5f}({loss_weights['pert'] * pert_diff_loss.item():.5f}, {loss_weights['identity'] * identity_diff_loss.item():.5f}, {loss_weights['latent'] * latent_code_diff_loss.item():.5f})"
+                )
+
+            source_identity = self._get_imgs_identity(source_imgs)
+            swap_imgs = self.target(None, target_imgs, source_identity, None, True)
+            x_identity = self._get_imgs_identity(x_imgs)
+            x_swap_imgs = self.target(None, target_imgs, x_identity, None, True)
+
+            pert_mse, pert_psnr, pert_ssim = self._calculate_utility(
+                source_imgs, x_imgs
+            )
+            data["pert_utility"] = tuple(
+                x + y
+                for x, y in zip(data["pert_utility"], (pert_mse, pert_psnr, pert_ssim))
+            )
+
+            pert_swap_mse, pert_swap_psnr, pert_swap_ssim = self._calculate_utility(
+                swap_imgs, x_swap_imgs
+            )
+            data["pert_swap_utility"] = tuple(
+                x + y
+                for x, y in zip(
+                    data["pert_swap_utility"],
+                    (pert_swap_mse, pert_swap_psnr, pert_swap_ssim),
+                )
+            )
+
+            (
+                pert_effectiveness,
+                swap_effectiveness,
+                pert_swap_effectiveness,
+                anchor_effectiveness,
+            ) = self._calculate_effectiveness(
+                source_imgs, None, x_imgs, swap_imgs, x_swap_imgs, mimic_img_expand
+            )
+            data["effectiveness"] = tuple(
+                x + y
+                for x, y in zip(
+                    data["effectiveness"],
+                    (
+                        pert_effectiveness,
+                        swap_effectiveness,
+                        pert_swap_effectiveness,
+                        anchor_effectiveness,
+                    ),
+                )
+            )
+            del source_identity, swap_imgs, x_identity, x_swap_imgs
+
+            target_identity = self._get_imgs_identity(target_imgs)
+            rev_swap_imgs = self.target(None, source_imgs, target_identity, None, True)
+            rev_x_swap_imgs = self.target(None, x_imgs, target_identity, None, True)
+            rev_pert_swap_mse, rev_pert_swap_psnr, rev_pert_swap_ssim = (
+                self._calculate_utility(rev_swap_imgs, rev_x_swap_imgs)
+            )
+            data["pert_swap_utility"] = tuple(
+                x + y
+                for x, y in zip(
+                    data["pert_swap_utility"],
+                    (rev_pert_swap_mse, rev_pert_swap_psnr, rev_pert_swap_ssim),
+                )
+            )
+
+            (
+                rev_pert_effectiveness,
+                rev_swap_effectiveness,
+                rev_pert_swap_effectiveness,
+            ) = self._calculate_effectiveness(
+                target_imgs,
+                source_imgs,
+                x_imgs,
+                rev_swap_imgs,
+                rev_x_swap_imgs,
+                None,
+            )
+            data["effectiveness"] = tuple(
+                x + y
+                for x, y in zip(
+                    data["effectiveness"],
+                    (
+                        rev_pert_effectiveness,
+                        rev_swap_effectiveness,
+                        rev_pert_swap_effectiveness,
+                        anchor_effectiveness,
+                    ),
+                )
+            )
+            del target_identity, rev_swap_imgs, rev_x_swap_imgs
+            # if i % self.args.log_interval == 0:
+            #     results = torch.cat(
+            #         (
+            #             source_imgs,
+            #             target_imgs,
+            #             x_imgs,
+            #             swap_imgs,
+            #             x_swap_imgs,
+            #             rev_swap_imgs,
+            #             rev_x_swap_imgs,
+            #         ),
+            #         dim=0,
+            #     )
+            #     save_path = join(self.args.log_dir, "image", f"pgd_both_{i}.png")
+            #     save_image(results, save_path, nrow=self.args.batch_size)
+            #     del results
+
+            del source_imgs, target_imgs, x_imgs
+            # del , x_identity, x_swap_imgs, rev_x_swap_imgs
+            torch.cuda.empty_cache()
+
+            self.logger.info(
+                f"Iter {i:5}/{total_batch:5}, pert utility(mse, psnr, ssim): {pert_mse:.3f}, {pert_psnr:.3f}, {pert_ssim:.3f}, pert swap utility(mse, psnr, ssim): {pert_swap_mse:.3f}, {pert_swap_psnr:.3f}, {pert_swap_ssim:.3f}, rev pert swap utility(mse, psnr, ssim): {rev_pert_swap_mse:.3f}, {rev_pert_swap_psnr:.3f}, {rev_pert_swap_ssim:.3f}, effectiveness (pert, clean swap, pert swap, anchor): {pert_effectiveness:.3f}, {swap_effectiveness:.3f}, {pert_swap_effectiveness:.3f}, {anchor_effectiveness:.3f}, rev effectiveness (pert, clean swap, pert swap): {rev_pert_effectiveness:.3f}, {rev_swap_effectiveness:.3f}, {rev_pert_swap_effectiveness:.3f}"
+            )
+
+            self.logger.info(
+                f"Average of {self.args.batch_size * (i + 1)} pictures: pert utility(mse, psnr, ssim): {tuple(f'{x / (i + 1):.3f}' for x in data['pert_utility'])}, pert swap utility(mse, psnr, ssim): {tuple(f'{x / (i + 1) / 2:.3f}' for x in data['pert_swap_utility'])}, effectiveness(pert, swap, pert swap, anchor): {tuple(f'{x / (i + 1) / 2:.3f}' for x in data['effectiveness'])}"
+            )
 
     def _get_random_imgs_path(self) -> tuple[list[str], list[str]]:
         people = sorted(os.listdir(self.dataset_dir))
