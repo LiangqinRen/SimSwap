@@ -716,7 +716,7 @@ class SimSwapDefense(nn.Module):
                 )
 
                 self.logger.info(
-                    f"[Batch {i+1:4}][Epoch {epoch:4}]loss: {loss:.5f}({loss_weights['pert'] * pert_diff_loss.item():.5f}, {loss_weights['identity'] * identity_diff_loss.item():.5f}, {loss_weights['latent'] * latent_code_diff_loss.item():.5f})"
+                    f"[Batch {i+1:4}/{total_batch:4}][Epoch {epoch:4}/{self.args.epochs:4}]loss: {loss:.5f}({loss_weights['pert'] * pert_diff_loss.item():.5f}, {loss_weights['identity'] * identity_diff_loss.item():.5f}, {loss_weights['latent'] * latent_code_diff_loss.item():.5f})"
                 )
 
             imgs1_src_swap, pert_imgs1_src_swap, imgs1_tgt_swap, pert_imgs1_tgt_swap = (
