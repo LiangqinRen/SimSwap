@@ -22,7 +22,7 @@ from models.models import create_model
 from models.fs_networks import Generator
 from tqdm import tqdm
 
-from evaluate import Utility, Effectiveness, Evaluate
+from evaluate import Utility, Effectiveness
 
 
 class SimSwapDefense(nn.Module):
@@ -502,10 +502,26 @@ class SimSwapDefense(nn.Module):
 
         return mask
 
+    def __get_protect_both_swap_imgs(
+        self, imgs1: torch.tensor, imgs2: torch.tensor, pert_imgs1: torch.tensor
+    ) -> tuple[torch.tensor, torch.tensor, torch.tensor, torch.tensor]:
+        imgs1_identity = self._get_imgs_identity(imgs1)
+        imgs1_src_swap = self.target(None, imgs2, imgs1_identity, None, True)
+
+        pert_imgs1_identity = self._get_imgs_identity(pert_imgs1)
+        pert_imgs1_src_swap = self.target(None, imgs2, pert_imgs1_identity, None, True)
+
+        imgs2_identity = self._get_imgs_identity(imgs2)
+        imgs1_tgt_swap = self.target(None, imgs1, imgs2_identity, None, True)
+
+        pert_imgs1_tgt_swap = self.target(None, pert_imgs1, imgs2_identity, None, True)
+
+        return imgs1_src_swap, pert_imgs1_src_swap, imgs1_tgt_swap, pert_imgs1_tgt_swap
+
     def pgd_both_sample(self) -> None:
         loss_weights = {"pert": 500, "identity": 1000, "latent": 0.5}
-        loss_limits = {"latent": 10}
-        self.logger.info(f"loss_weights: {loss_weights}")
+        loss_limits = {"latent": 15}
+        self.logger.info(f"loss_weights: {loss_weights}, loss_limits: {loss_limits}")
 
         self.target.cuda().eval()
         l2_loss = nn.MSELoss().cuda()
@@ -527,7 +543,7 @@ class SimSwapDefense(nn.Module):
             * (torch.max(protect_imgs) - torch.min(protect_imgs))
             / 2
         )
-        mask = self.__get_face_mask(x_imgs)
+        mask = self.__get_face_mask(x_imgs, self.args.face_mask_ratio)
         for epoch in range(self.args.epochs):
             x_imgs.requires_grad = True
 
@@ -571,18 +587,19 @@ class SimSwapDefense(nn.Module):
             join(self.samples_dir, "zrf.jpg"),
         ]
         other_imgs = self._load_imgs(other_path)
-        other_identity = self._get_imgs_identity(other_imgs)
+        imgs1_src_swap, pert_imgs1_src_swap, imgs1_tgt_swap, pert_imgs1_tgt_swap = (
+            self.__get_protect_both_swap_imgs(protect_imgs, other_imgs, x_imgs)
+        )
 
-        x_identity = self._get_imgs_identity(x_imgs)
-        protect_as_source_swap = self.target(None, other_imgs, x_identity, None, True)
-        protect_as_target_swap = self.target(None, x_imgs, other_identity, None, True)
         results = torch.cat(
             (
                 protect_imgs,
                 other_imgs,
                 x_imgs,
-                protect_as_source_swap,
-                protect_as_target_swap,
+                imgs1_src_swap,
+                pert_imgs1_src_swap,
+                imgs1_tgt_swap,
+                pert_imgs1_tgt_swap,
             ),
             dim=0,
         )
@@ -590,6 +607,28 @@ class SimSwapDefense(nn.Module):
             results,
             join(self.args.log_dir, "image", f"summary.png"),
             nrow=len(protect_path),
+        )
+        del results
+
+        pert_utilities = self.utility.calculate_utility(protect_imgs, x_imgs)
+        pert_as_src_swap_utilities = self.utility.calculate_utility(
+            imgs1_src_swap, pert_imgs1_src_swap
+        )
+        pert_as_tgt_swap_utilities = self.utility.calculate_utility(
+            imgs1_tgt_swap, pert_imgs1_tgt_swap
+        )
+        effectivenesses = self._calculate_effectiveness(
+            protect_imgs,
+            other_imgs,
+            x_imgs,
+            imgs1_src_swap,
+            pert_imgs1_src_swap,
+            mimic_img_expand,
+            True,
+        )
+
+        self.logger.info(
+            f"pert utility(mse, psnr, ssim, lpips): ({pert_utilities['mse']:.3f}, {pert_utilities['psnr']:.3f}, {pert_utilities['ssim']:.3f}, {pert_utilities['lpips']:.3f}), pert as source swap utility(mse, psnr, ssim, lpips): ({pert_as_src_swap_utilities['mse']:.3f}, {pert_as_src_swap_utilities['psnr']:.3f}, {pert_as_src_swap_utilities['ssim']:.3f}, {pert_as_src_swap_utilities['lpips']:.3f}), pert as target swap utility(mse, psnr, ssim, lpips): ({pert_as_tgt_swap_utilities['mse']:.3f}, {pert_as_tgt_swap_utilities['psnr']:.3f}, {pert_as_tgt_swap_utilities['ssim']:.3f}, {pert_as_tgt_swap_utilities['lpips']:.3f}), effectivenesses(pert, swap, pert_swap, anchor): ({effectivenesses['pert']:.3f}, {effectivenesses['swap']:.3f}, {effectivenesses['pert_swap']:.3f}, {effectivenesses['anchor']:.3f})"
         )
 
     def pgd_both_metric(self) -> None:
@@ -754,25 +793,7 @@ class SimSwapDefense(nn.Module):
                 )
             )
             del target_identity, rev_swap_imgs, rev_x_swap_imgs
-            # if i % self.args.log_interval == 0:
-            #     results = torch.cat(
-            #         (
-            #             source_imgs,
-            #             target_imgs,
-            #             x_imgs,
-            #             swap_imgs,
-            #             x_swap_imgs,
-            #             rev_swap_imgs,
-            #             rev_x_swap_imgs,
-            #         ),
-            #         dim=0,
-            #     )
-            #     save_path = join(self.args.log_dir, "image", f"pgd_both_{i}.png")
-            #     save_image(results, save_path, nrow=self.args.batch_size)
-            #     del results
-
             del source_imgs, target_imgs, x_imgs
-            # del , x_identity, x_swap_imgs, rev_x_swap_imgs
             torch.cuda.empty_cache()
 
             self.logger.info(
@@ -871,6 +892,7 @@ class SimSwapDefense(nn.Module):
         pert_imgs_swap: torch.tensor,
         anchor_imgs: torch.tensor = None,
     ):
+        effectivenesses = {"pert": 0, "swap": 0, "pert_swap": 0, "anchor": 0}
         source_imgs_ndarray = (
             source_imgs.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
         )
@@ -908,6 +930,58 @@ class SimSwapDefense(nn.Module):
             return pert, clean_swap, pert_swap, anchor
 
         return pert, clean_swap, pert_swap
+
+    def _calculate_effectiveness(
+        self,
+        source_imgs: torch.tensor,
+        target_imgs: torch.tensor,
+        pert_imgs: torch.tensor,
+        imgs_swap: torch.tensor,
+        pert_imgs_swap: torch.tensor,
+        anchor_imgs: torch.tensor,
+        protect_source: bool = True,
+    ):
+        effectivenesses = {"pert": 0, "swap": 0, "pert_swap": 0, "anchor": 0}
+
+        source_imgs_ndarray = (
+            source_imgs.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
+        )
+        pert_imgs_ndarray = (
+            pert_imgs.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
+        )
+        imgs_swap_ndarray = (
+            imgs_swap.detach().cpu().numpy().transpose(0, 2, 3, 1)
+        ) * 255.0
+        pert_imgs_swap_ndarray = (
+            pert_imgs_swap.detach().cpu().numpy().transpose(0, 2, 3, 1)
+        ) * 255.0
+
+        swap, _ = self.effectiveness.compare(source_imgs_ndarray, imgs_swap_ndarray)
+        effectivenesses["swap"] = swap
+        pert_swap, _ = self.effectiveness.compare(
+            source_imgs_ndarray, pert_imgs_swap_ndarray
+        )
+        effectivenesses["pert_swap"] = pert_swap
+
+        if protect_source:
+            pert, _ = self.effectiveness.compare(source_imgs_ndarray, pert_imgs_ndarray)
+            effectivenesses["pert"] = pert
+            if anchor_imgs is not None:
+                anchor_imgs_ndarray = (
+                    anchor_imgs.detach().cpu().numpy().transpose(0, 2, 3, 1)
+                ) * 255.0
+                anchor, _ = self.effectiveness.compare(
+                    anchor_imgs_ndarray, pert_imgs_swap_ndarray
+                )
+                effectivenesses["anchor"] = anchor
+        else:
+            target_imgs_ndarray = (
+                target_imgs.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
+            )
+            pert, _ = self.effectiveness.compare(target_imgs_ndarray, pert_imgs_ndarray)
+            effectivenesses["pert"] = pert
+
+        return effectivenesses
 
     def pgd_source_metric(self, loss_weights=[1, 1]):
         self.logger.info(f"loss_weights: {loss_weights}")

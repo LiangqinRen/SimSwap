@@ -85,6 +85,8 @@ def get_argparser():
 
     parser.add_argument("--metric_people_image", type=int, default=5)
 
+    parser.add_argument("--face_mask_ratio", type=float, default=0.25)
+
     parser.add_argument("--pgd_source", type=str)
     parser.add_argument("--pgd_target", type=str)
     parser.add_argument("--pgd_mimic", type=str)
