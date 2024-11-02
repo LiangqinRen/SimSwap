@@ -617,7 +617,7 @@ class SimSwapDefense(nn.Module):
         pert_as_tgt_swap_utilities = self.utility.calculate_utility(
             imgs1_tgt_swap, pert_imgs1_tgt_swap
         )
-        effectivenesses = self._calculate_effectiveness(
+        src_effectivenesses = self._calculate_effectiveness(
             protect_imgs,
             other_imgs,
             x_imgs,
@@ -626,24 +626,35 @@ class SimSwapDefense(nn.Module):
             mimic_img_expand,
             True,
         )
+        tgt_effectivenesses = self._calculate_effectiveness(
+            other_imgs,
+            protect_imgs,
+            x_imgs,
+            imgs1_tgt_swap,
+            pert_imgs1_tgt_swap,
+            mimic_img_expand,
+            True,
+        )
 
         self.logger.info(
-            f"pert utility(mse, psnr, ssim, lpips): ({pert_utilities['mse']:.3f}, {pert_utilities['psnr']:.3f}, {pert_utilities['ssim']:.3f}, {pert_utilities['lpips']:.3f}), pert as source swap utility(mse, psnr, ssim, lpips): ({pert_as_src_swap_utilities['mse']:.3f}, {pert_as_src_swap_utilities['psnr']:.3f}, {pert_as_src_swap_utilities['ssim']:.3f}, {pert_as_src_swap_utilities['lpips']:.3f}), pert as target swap utility(mse, psnr, ssim, lpips): ({pert_as_tgt_swap_utilities['mse']:.3f}, {pert_as_tgt_swap_utilities['psnr']:.3f}, {pert_as_tgt_swap_utilities['ssim']:.3f}, {pert_as_tgt_swap_utilities['lpips']:.3f}), effectivenesses(pert, swap, pert_swap, anchor): ({effectivenesses['pert']:.3f}, {effectivenesses['swap']:.3f}, {effectivenesses['pert_swap']:.3f}, {effectivenesses['anchor']:.3f})"
+            f"pert utility(mse, psnr, ssim, lpips): ({pert_utilities['mse']:.3f}, {pert_utilities['psnr']:.3f}, {pert_utilities['ssim']:.3f}, {pert_utilities['lpips']:.3f}), pert as source swap utility(mse, psnr, ssim, lpips): ({pert_as_src_swap_utilities['mse']:.3f}, {pert_as_src_swap_utilities['psnr']:.3f}, {pert_as_src_swap_utilities['ssim']:.3f}, {pert_as_src_swap_utilities['lpips']:.3f}), pert as target swap utility(mse, psnr, ssim, lpips): ({pert_as_tgt_swap_utilities['mse']:.3f}, {pert_as_tgt_swap_utilities['psnr']:.3f}, {pert_as_tgt_swap_utilities['ssim']:.3f}, {pert_as_tgt_swap_utilities['lpips']:.3f}), pert as source effectivenesses(pert, swap, pert_swap, anchor): ({src_effectivenesses['pert']:.3f}, {src_effectivenesses['swap']:.3f}, {src_effectivenesses['pert_swap']:.3f}, {src_effectivenesses['anchor']:.3f}), pert as target effectivenesses(swap, pert_swap): ({tgt_effectivenesses['swap']:.3f}, {tgt_effectivenesses['pert_swap']:.3f})"
         )
 
     def pgd_both_metric(self) -> None:
         loss_weights = {"pert": 500, "identity": 1000, "latent": 0.5}
-        loss_limits = {"latent": 10}
-        self.logger.info(f"loss_weights: {loss_weights}")
+        loss_limits = {"latent": 15}
+        self.logger.info(f"loss_weights: {loss_weights}, loss_limits: {loss_limits}")
 
         self.target.cuda().eval()
         l2_loss = nn.MSELoss().cuda()
 
         source_imgs_path, target_imgs_path = self._get_split_test_imgs_path()
         data = {
-            "pert_utility": (0, 0, 0),
-            "pert_swap_utility": (0, 0, 0),
-            "effectiveness": (0, 0, 0, 0),
+            "pert_utility": (0, 0, 0, 0),
+            "pert_as_src_swap_utility": (0, 0, 0, 0),
+            "pert_as_tgt_swap_utility": (0, 0, 0, 0),
+            "pert_as_src_effectiveness": (0, 0, 0, 0),
+            "pert_as_tgt_effectiveness": (0, 0, 0, 0),
         }
 
         mimic_img = self._load_imgs([join(self.args.data_dir, self.args.pgd_mimic)])
@@ -705,103 +716,127 @@ class SimSwapDefense(nn.Module):
                 )
 
                 self.logger.info(
-                    f"[Epoch {epoch:4}]loss: {loss:.5f}({loss_weights['pert'] * pert_diff_loss.item():.5f}, {loss_weights['identity'] * identity_diff_loss.item():.5f}, {loss_weights['latent'] * latent_code_diff_loss.item():.5f})"
+                    f"[Batch {i+1:4}][Epoch {epoch:4}]loss: {loss:.5f}({loss_weights['pert'] * pert_diff_loss.item():.5f}, {loss_weights['identity'] * identity_diff_loss.item():.5f}, {loss_weights['latent'] * latent_code_diff_loss.item():.5f})"
                 )
 
-            source_identity = self._get_imgs_identity(source_imgs)
-            swap_imgs = self.target(None, target_imgs, source_identity, None, True)
-            x_identity = self._get_imgs_identity(x_imgs)
-            x_swap_imgs = self.target(None, target_imgs, x_identity, None, True)
-
-            pert_mse, pert_psnr, pert_ssim = self._calculate_utility(
-                source_imgs, x_imgs
-            )
-            data["pert_utility"] = tuple(
-                x + y
-                for x, y in zip(data["pert_utility"], (pert_mse, pert_psnr, pert_ssim))
+            imgs1_src_swap, pert_imgs1_src_swap, imgs1_tgt_swap, pert_imgs1_tgt_swap = (
+                self.__get_protect_both_swap_imgs(source_imgs, target_imgs, x_imgs)
             )
 
-            pert_swap_mse, pert_swap_psnr, pert_swap_ssim = self._calculate_utility(
-                swap_imgs, x_swap_imgs
+            results = torch.cat(
+                (
+                    source_imgs,
+                    target_imgs,
+                    x_imgs,
+                    imgs1_src_swap,
+                    pert_imgs1_src_swap,
+                    imgs1_tgt_swap,
+                    pert_imgs1_tgt_swap,
+                ),
+                dim=0,
             )
-            data["pert_swap_utility"] = tuple(
-                x + y
-                for x, y in zip(
-                    data["pert_swap_utility"],
-                    (pert_swap_mse, pert_swap_psnr, pert_swap_ssim),
-                )
+            save_image(
+                results,
+                join(self.args.log_dir, "image", f"batch{i+1}.png"),
+                nrow=len(source_imgs),
             )
+            del results
 
-            (
-                pert_effectiveness,
-                swap_effectiveness,
-                pert_swap_effectiveness,
-                anchor_effectiveness,
-            ) = self._calculate_effectiveness(
-                source_imgs, None, x_imgs, swap_imgs, x_swap_imgs, mimic_img_expand
+            pert_utilities = self.utility.calculate_utility(source_imgs, x_imgs)
+            pert_as_src_swap_utilities = self.utility.calculate_utility(
+                imgs1_src_swap, pert_imgs1_src_swap
             )
-            data["effectiveness"] = tuple(
-                x + y
-                for x, y in zip(
-                    data["effectiveness"],
-                    (
-                        pert_effectiveness,
-                        swap_effectiveness,
-                        pert_swap_effectiveness,
-                        anchor_effectiveness,
-                    ),
-                )
+            pert_as_tgt_swap_utilities = self.utility.calculate_utility(
+                imgs1_tgt_swap, pert_imgs1_tgt_swap
             )
-            del source_identity, swap_imgs, x_identity, x_swap_imgs
-
-            target_identity = self._get_imgs_identity(target_imgs)
-            rev_swap_imgs = self.target(None, source_imgs, target_identity, None, True)
-            rev_x_swap_imgs = self.target(None, x_imgs, target_identity, None, True)
-            rev_pert_swap_mse, rev_pert_swap_psnr, rev_pert_swap_ssim = (
-                self._calculate_utility(rev_swap_imgs, rev_x_swap_imgs)
+            src_effectivenesses = self._calculate_effectiveness(
+                source_imgs,
+                target_imgs,
+                x_imgs,
+                imgs1_src_swap,
+                pert_imgs1_src_swap,
+                mimic_img_expand,
+                True,
             )
-            data["pert_swap_utility"] = tuple(
-                x + y
-                for x, y in zip(
-                    data["pert_swap_utility"],
-                    (rev_pert_swap_mse, rev_pert_swap_psnr, rev_pert_swap_ssim),
-                )
-            )
-
-            (
-                rev_pert_effectiveness,
-                rev_swap_effectiveness,
-                rev_pert_swap_effectiveness,
-            ) = self._calculate_effectiveness(
+            tgt_effectivenesses = self._calculate_effectiveness(
                 target_imgs,
                 source_imgs,
                 x_imgs,
-                rev_swap_imgs,
-                rev_x_swap_imgs,
-                None,
+                imgs1_tgt_swap,
+                pert_imgs1_tgt_swap,
+                mimic_img_expand,
+                True,
             )
-            data["effectiveness"] = tuple(
+
+            data["pert_utility"] = tuple(
                 x + y
                 for x, y in zip(
-                    data["effectiveness"],
+                    data["pert_utility"],
                     (
-                        rev_pert_effectiveness,
-                        rev_swap_effectiveness,
-                        rev_pert_swap_effectiveness,
-                        anchor_effectiveness,
+                        pert_utilities["mse"],
+                        pert_utilities["ssim"],
+                        pert_utilities["psnr"],
+                        pert_utilities["lpips"],
                     ),
                 )
             )
-            del target_identity, rev_swap_imgs, rev_x_swap_imgs
-            del source_imgs, target_imgs, x_imgs
+            data["pert_as_src_swap_utility"] = tuple(
+                x + y
+                for x, y in zip(
+                    data["pert_as_src_swap_utility"],
+                    (
+                        pert_as_src_swap_utilities["mse"],
+                        pert_as_src_swap_utilities["ssim"],
+                        pert_as_src_swap_utilities["psnr"],
+                        pert_as_src_swap_utilities["lpips"],
+                    ),
+                )
+            )
+            data["pert_as_tgt_swap_utility"] = tuple(
+                x + y
+                for x, y in zip(
+                    data["pert_as_tgt_swap_utility"],
+                    (
+                        pert_as_tgt_swap_utilities["mse"],
+                        pert_as_tgt_swap_utilities["ssim"],
+                        pert_as_tgt_swap_utilities["psnr"],
+                        pert_as_tgt_swap_utilities["lpips"],
+                    ),
+                )
+            )
+            data["pert_as_src_effectiveness"] = tuple(
+                x + y
+                for x, y in zip(
+                    data["pert_as_src_effectiveness"],
+                    (
+                        src_effectivenesses["pert"],
+                        src_effectivenesses["swap"],
+                        src_effectivenesses["pert_swap"],
+                        src_effectivenesses["anchor"],
+                    ),
+                )
+            )
+            data["pert_as_tgt_effectiveness"] = tuple(
+                x + y
+                for x, y in zip(
+                    data["pert_as_tgt_effectiveness"],
+                    (
+                        tgt_effectivenesses["pert"],
+                        tgt_effectivenesses["swap"],
+                        tgt_effectivenesses["pert_swap"],
+                        tgt_effectivenesses["anchor"],
+                    ),
+                )
+            )
+            del imgs1_src_swap, pert_imgs1_src_swap, imgs1_tgt_swap, pert_imgs1_tgt_swap
             torch.cuda.empty_cache()
 
             self.logger.info(
-                f"Iter {i:5}/{total_batch:5}, pert utility(mse, psnr, ssim): {pert_mse:.3f}, {pert_psnr:.3f}, {pert_ssim:.3f}, pert swap utility(mse, psnr, ssim): {pert_swap_mse:.3f}, {pert_swap_psnr:.3f}, {pert_swap_ssim:.3f}, rev pert swap utility(mse, psnr, ssim): {rev_pert_swap_mse:.3f}, {rev_pert_swap_psnr:.3f}, {rev_pert_swap_ssim:.3f}, effectiveness (pert, clean swap, pert swap, anchor): {pert_effectiveness:.3f}, {swap_effectiveness:.3f}, {pert_swap_effectiveness:.3f}, {anchor_effectiveness:.3f}, rev effectiveness (pert, clean swap, pert swap): {rev_pert_effectiveness:.3f}, {rev_swap_effectiveness:.3f}, {rev_pert_swap_effectiveness:.3f}"
+                f"pert utility(mse, psnr, ssim, lpips): ({pert_utilities['mse']:.3f}, {pert_utilities['psnr']:.3f}, {pert_utilities['ssim']:.3f}, {pert_utilities['lpips']:.3f}), pert as source swap utility(mse, psnr, ssim, lpips): ({pert_as_src_swap_utilities['mse']:.3f}, {pert_as_src_swap_utilities['psnr']:.3f}, {pert_as_src_swap_utilities['ssim']:.3f}, {pert_as_src_swap_utilities['lpips']:.3f}), pert as target swap utility(mse, psnr, ssim, lpips): ({pert_as_tgt_swap_utilities['mse']:.3f}, {pert_as_tgt_swap_utilities['psnr']:.3f}, {pert_as_tgt_swap_utilities['ssim']:.3f}, {pert_as_tgt_swap_utilities['lpips']:.3f}), pert as src effectivenesses(pert, swap, pert_swap, anchor): ({src_effectivenesses['pert']:.3f}, {src_effectivenesses['swap']:.3f}, {src_effectivenesses['pert_swap']:.3f}, {src_effectivenesses['anchor']:.3f}), pert as tgt effectivenesses(swap, pert_swap): ({src_effectivenesses['swap']:.3f}, {src_effectivenesses['pert_swap']:.3f})"
             )
 
             self.logger.info(
-                f"Average of {self.args.batch_size * (i + 1)} pictures: pert utility(mse, psnr, ssim): {tuple(f'{x / (i + 1):.3f}' for x in data['pert_utility'])}, pert swap utility(mse, psnr, ssim): {tuple(f'{x / (i + 1) / 2:.3f}' for x in data['pert_swap_utility'])}, effectiveness(pert, swap, pert swap, anchor): {tuple(f'{x / (i + 1) / 2:.3f}' for x in data['effectiveness'])}"
+                f"Average of {self.args.batch_size * (i + 1)} pictures: pert utility(mse, psnr, ssim, lpips): {tuple(f'{x / (i + 1):.3f}' for x in data['pert_utility'])}, pert as source swap utility(mse, psnr, ssim, lpips): {tuple(f'{x / (i + 1):.3f}' for x in data['pert_as_src_swap_utility'])}, pert as target swap utility(mse, psnr, ssim, lpips): {tuple(f'{x / (i + 1):.3f}' for x in data['pert_as_tgt_swap_utility'])}, pert as src effectiveness(pert, swap, pert swap, anchor): {tuple(f'{x / (i + 1):.3f}' for x in data['pert_as_src_effectiveness'])}, pert as tgt effectiveness(swap, pert swap): {data['pert_as_tgt_effectiveness'][1] / (i + 1):.3f}, {data['pert_as_tgt_effectiveness'][2] / (i + 1):.3f}"
             )
 
     def _get_random_imgs_path(self) -> tuple[list[str], list[str]]:

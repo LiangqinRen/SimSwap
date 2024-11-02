@@ -39,7 +39,7 @@ then
     python main.py --method $mode --epochs 300 --pgd_epsilon 0.005 --pgd_limit 0.075 --pgd_mimic "samples/james.jpg" --face_mask_ratio 0.25
 elif [[ $mode == 'pgd_both_metric' ]]
 then
-    python main.py --method $mode --epochs 300 --pgd_epsilon 0.005 --pgd_limit 0.075 --pgd_mimic "samples/james.jpg" --batch_size 20 --face_mask_ratio 0.3
+    python main.py --method $mode --epochs 300 --pgd_epsilon 0.005 --pgd_limit 0.075 --pgd_mimic "samples/zjl.jpg" --batch_size 12 --face_mask_ratio 0.3
 elif [[ $mode == 'pgd_source_distance' ]]
 then
     python main.py --method $mode --pgd_mimic "samples/zjl.jpg" --batch_size 50 --epochs 75 --pgd_epsilon 0.05 --pgd_limit 0.25 --log_interval 10
