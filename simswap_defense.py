@@ -541,19 +541,12 @@ class SimSwapDefense(nn.Module):
                 )
                 distances.append(distance)
 
-            best_anchor_idx = -1
+            best_anchor_idx = 0
             for i, distance in enumerate(distances):
-                if distance <= 0.91906 + 0.3:
-                    if best_anchor_idx == -1:
-                        best_anchor_idx = i
-                    elif distance > distances[best_anchor_idx]:
-                        best_anchor_idx = i
-
-            if best_anchor_idx == -1:
-                best_anchor_idx = 0
-                for i, distance in enumerate(distances[1:], start=1):
-                    if distances[i] < distances[best_anchor_idx]:
-                        best_anchor_idx = i
+                if abs(distances[i] - 0.91906) < abs(
+                    distances[best_anchor_idx] - 0.91906
+                ):
+                    best_anchor_idx = i
 
             best_anchors.append(anchor_imgs[best_anchor_idx])
 
