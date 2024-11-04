@@ -98,26 +98,7 @@ class Effectiveness:
         ).cuda()
         self.FaceVerification.eval()
 
-    def compare(self, imgs1, imgs2):
-        count = 0
-        img1_cropped, img2_cropped = self.detect_face(imgs1, imgs2)
-
-        with torch.no_grad():
-            img1_embeddings = self.FaceVerification(img1_cropped).detach().cpu()
-            img2_embeddings = self.FaceVerification(img2_cropped).detach().cpu()
-
-            dists = [
-                (e1 - e2).norm().item()
-                for e1, e2 in zip(img1_embeddings, img2_embeddings)
-            ]
-
-            for dist in dists:
-                if dist < 0.91906:
-                    count += 1
-
-        return count / img1_cropped.shape[0], sum(dists) / len(dists)
-
-    def detect_face(self, imgs1, imgs2):
+    def detect_faces(self, imgs1, imgs2):
         IMG1 = []
         IMG2 = []
         for idx in range(min(imgs1.shape[0], imgs2.shape[0])):
@@ -141,6 +122,42 @@ class Effectiveness:
         IMG1 = torch.stack(IMG1, dim=0).cuda()
         IMG2 = torch.stack(IMG2, dim=0).cuda()
         return IMG1, IMG2
+
+    def get_distance(self, img1, img2):
+        img1_cropped = self.mtcnn(img1).unsqueeze(0)
+        img2_cropped = self.mtcnn(img2).unsqueeze(0)
+
+        if img1_cropped is None:
+            img1_cropped = torch.ones((1, 3, 160, 160))
+        if img2_cropped is None:
+            img2_cropped = torch.ones((1, 3, 160, 160))
+
+        img1_embeddings = self.FaceVerification(img1_cropped.cuda())
+        img2_embeddings = self.FaceVerification(img2_cropped.cuda())
+
+        with torch.no_grad():
+            distance = (img1_embeddings - img2_embeddings).norm().item()
+
+        return distance
+
+    def compare(self, imgs1, imgs2):
+        count = 0
+        img1_cropped, img2_cropped = self.detect_faces(imgs1, imgs2)
+
+        with torch.no_grad():
+            img1_embeddings = self.FaceVerification(img1_cropped).detach().cpu()
+            img2_embeddings = self.FaceVerification(img2_cropped).detach().cpu()
+
+            dists = [
+                (e1 - e2).norm().item()
+                for e1, e2 in zip(img1_embeddings, img2_embeddings)
+            ]
+
+            for dist in dists:
+                if dist < 0.91906:
+                    count += 1
+
+        return count / img1_cropped.shape[0], sum(dists) / len(dists)
 
     def _is_ndarray_valid(self, ndarray: np.ndarray) -> bool:
         return ndarray is not None and isinstance(ndarray, np.ndarray)

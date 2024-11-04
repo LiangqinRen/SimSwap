@@ -1,6 +1,7 @@
 import inspect
 
 import simswap_defense
+import simswap_anchor
 import utils
 
 
@@ -14,6 +15,7 @@ def main():
     timer = utils.Timer(inspect.currentframe().f_code.co_name, logger)
 
     defense = simswap_defense.SimSwapDefense(args, logger)
+    anchor = simswap_anchor.Anchor(args, logger)
     defense_functions = {
         # "split": defense.split_dataset,
         # "swap": defense.swap,
@@ -54,6 +56,7 @@ def main():
         "gan_target_robustness_sample": defense.gan_target_robustness_sample,
         "gan_source_robustness_metric": defense.gan_source_robustness_metric,
         "gan_target_robustness_metric": defense.gan_target_robustness_metric,
+        "anchor": anchor.get_imgs_embeddings,
     }
 
     if args.method in defense_functions:

@@ -35,6 +35,7 @@ class SimSwapDefense(nn.Module):
         self.dataset_dir = join(args.data_dir, "vggface2_crop_224")
         self.trainset_dir = join(args.data_dir, "train")
         self.testset_dir = join(args.data_dir, "test")
+        self.anchorset_dir = join(args.data_dir, "anchor")
 
         self.gan_rgb_limits = [0.075, 0.03, 0.075]
         self.gan_src_loss_limits = [0.01, 0.01]
@@ -518,6 +519,46 @@ class SimSwapDefense(nn.Module):
 
         return imgs1_src_swap, pert_imgs1_src_swap, imgs1_tgt_swap, pert_imgs1_tgt_swap
 
+    def __get_anchor_imgs_path(self) -> list[str]:
+        all_imgs_path = sorted(os.listdir(self.anchorset_dir))
+        all_imgs_path = [join(self.anchorset_dir, name) for name in all_imgs_path]
+
+        return all_imgs_path
+
+    def __find_best_anchor(
+        self, imgs: torch.tensor, anchor_imgs: torch.tensor
+    ) -> torch.tensor:
+        imgs_ndarray = imgs.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
+        anchor_img_ndarray = (
+            anchor_imgs.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
+        )
+        best_anchors = []
+        for i in range(imgs.shape[0]):
+            distances = []
+            for j in range(anchor_imgs.shape[0]):
+                distance = self.effectiveness.get_distance(
+                    imgs_ndarray[i], anchor_img_ndarray[j]
+                )
+                distances.append(distance)
+
+            best_anchor_idx = -1
+            for i, distance in enumerate(distances):
+                if distance <= 0.91906 + 0.3:
+                    if best_anchor_idx == -1:
+                        best_anchor_idx = i
+                    elif distance > distances[best_anchor_idx]:
+                        best_anchor_idx = i
+
+            if best_anchor_idx == -1:
+                best_anchor_idx = 0
+                for i, distance in enumerate(distances[1:], start=1):
+                    if distances[i] < distances[best_anchor_idx]:
+                        best_anchor_idx = i
+
+            best_anchors.append(anchor_imgs[best_anchor_idx])
+
+        return torch.stack(best_anchors, dim=0)
+
     def pgd_both_sample(self) -> None:
         loss_weights = {"pert": 500, "identity": 1000, "latent": 0.5}
         loss_limits = {"latent": 15}
@@ -532,12 +573,13 @@ class SimSwapDefense(nn.Module):
             join(self.samples_dir, "hzxc.jpg"),
         ]
 
-        mimic_img = self._load_imgs([join(self.args.data_dir, self.args.pgd_mimic)])
-        mimic_img_expand = mimic_img.repeat(len(protect_path), 1, 1, 1)
-        mimic_identity_expand = self._get_imgs_identity(mimic_img_expand)
-
         protect_imgs = self._load_imgs(protect_path)
         x_imgs = protect_imgs.clone().detach()
+
+        anchor_imgs_path = self.__get_anchor_imgs_path()
+        anchor_imgs = self._load_imgs(anchor_imgs_path)
+        anchor_imgs = self.__find_best_anchor(protect_imgs, anchor_imgs)
+        anchor_identity = self._get_imgs_identity(anchor_imgs)
         epsilon = (
             self.args.pgd_epsilon
             * (torch.max(protect_imgs) - torch.min(protect_imgs))
@@ -548,12 +590,11 @@ class SimSwapDefense(nn.Module):
             x_imgs.requires_grad = True
 
             x_identity = self._get_imgs_identity(x_imgs)
-            identity_diff_loss = l2_loss(x_identity, mimic_identity_expand.detach())
             x_latent_code = self.target.netG.encoder(x_imgs)
-            mimic_latent_code = self.target.netG.encoder(mimic_img_expand)
+            mimic_latent_code = self.target.netG.encoder(anchor_imgs)
 
             pert_diff_loss = l2_loss(x_imgs, protect_imgs.detach())
-            identity_diff_loss = l2_loss(x_identity, mimic_identity_expand.detach())
+            identity_diff_loss = l2_loss(x_identity, anchor_identity.detach())
             latent_code_diff_loss = torch.clamp(
                 l2_loss(x_latent_code, mimic_latent_code.detach()),
                 0.0,
@@ -596,6 +637,7 @@ class SimSwapDefense(nn.Module):
                 protect_imgs,
                 other_imgs,
                 x_imgs,
+                anchor_imgs,
                 imgs1_src_swap,
                 pert_imgs1_src_swap,
                 imgs1_tgt_swap,
@@ -623,7 +665,7 @@ class SimSwapDefense(nn.Module):
             x_imgs,
             imgs1_src_swap,
             pert_imgs1_src_swap,
-            mimic_img_expand,
+            anchor_imgs,
             True,
         )
         tgt_effectivenesses = self._calculate_effectiveness(
@@ -632,7 +674,7 @@ class SimSwapDefense(nn.Module):
             x_imgs,
             imgs1_tgt_swap,
             pert_imgs1_tgt_swap,
-            mimic_img_expand,
+            anchor_imgs,
             True,
         )
 
@@ -657,9 +699,8 @@ class SimSwapDefense(nn.Module):
             "pert_as_tgt_effectiveness": (0, 0, 0, 0),
         }
 
-        mimic_img = self._load_imgs([join(self.args.data_dir, self.args.pgd_mimic)])
-        mimic_img_expand = mimic_img.repeat(self.args.batch_size, 1, 1, 1)
-        mimic_identity_expand = self._get_imgs_identity(mimic_img_expand)
+        anchor_imgs_path = self.__get_anchor_imgs_path()
+        anchor_imgs = self._load_imgs(anchor_imgs_path)
 
         total_batch = (
             min(len(source_imgs_path), len(target_imgs_path)) // self.args.batch_size
@@ -674,6 +715,8 @@ class SimSwapDefense(nn.Module):
 
             source_imgs = self._load_imgs(iter_source_path)
             target_imgs = self._load_imgs(iter_target_path)
+            best_anchor_imgs = self.__find_best_anchor(source_imgs, anchor_imgs)
+            best_anchor_identity = self._get_imgs_identity(best_anchor_imgs)
 
             x_imgs = source_imgs.clone().detach()
             epsilon = (
@@ -686,12 +729,12 @@ class SimSwapDefense(nn.Module):
                 x_imgs.requires_grad = True
 
                 x_identity = self._get_imgs_identity(x_imgs)
-                identity_diff_loss = l2_loss(x_identity, mimic_identity_expand.detach())
+                identity_diff_loss = l2_loss(x_identity, best_anchor_identity.detach())
                 x_latent_code = self.target.netG.encoder(x_imgs)
-                mimic_latent_code = self.target.netG.encoder(mimic_img_expand)
+                mimic_latent_code = self.target.netG.encoder(best_anchor_imgs)
 
                 pert_diff_loss = l2_loss(x_imgs, source_imgs.clone().detach())
-                identity_diff_loss = l2_loss(x_identity, mimic_identity_expand.detach())
+                identity_diff_loss = l2_loss(x_identity, best_anchor_identity.detach())
                 latent_code_diff_loss = torch.clamp(
                     l2_loss(x_latent_code, mimic_latent_code.detach()),
                     0.0,
@@ -755,7 +798,7 @@ class SimSwapDefense(nn.Module):
                 x_imgs,
                 imgs1_src_swap,
                 pert_imgs1_src_swap,
-                mimic_img_expand,
+                best_anchor_imgs,
                 True,
             )
             tgt_effectivenesses = self._calculate_effectiveness(
@@ -764,7 +807,7 @@ class SimSwapDefense(nn.Module):
                 x_imgs,
                 imgs1_tgt_swap,
                 pert_imgs1_tgt_swap,
-                mimic_img_expand,
+                best_anchor_imgs,
                 True,
             )
 
