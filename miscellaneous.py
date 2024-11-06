@@ -134,7 +134,7 @@ class Worker(common_base.Base):
                 f.write(f"{line}\n")
 
         self.logger.info(
-            f"With {len(distances)} pictures, the max, mean, min distances are {sorted_distances[-1][1]:.5f}, {sum_difference/len(distances):.5f} and {sorted_distances[0][1]:.5f}"
+            f"With {len(distances)} pictures, the max, mean, min distances are {sorted_distances[-1][2]:.5f}, {sum_difference/len(distances):.5f} and {sorted_distances[0][2]:.5f}"
         )
 
 
