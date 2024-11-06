@@ -98,7 +98,7 @@ class Worker(common_base.Base):
         )
 
         path_distances = []
-        sum_difference = 0
+        distance_sum = 0
         total_batch = (
             min(len(source_imgs_path), len(target_imgs_path)) // self.args.batch_size
         )
@@ -124,12 +124,12 @@ class Worker(common_base.Base):
                     source_imgs, target_imgs
                 )
             for i in range(len(distances)):
-                if distances[i] == math.nan:
+                if distances[i] is math.nan:
                     continue
                 tqdm.write(
                     f"{iter_source_path[i]}, {iter_target_path[i]} distance: {distances[i]:.5f}"
                 )
-                sum_difference += distances[i]
+                distance_sum += distances[i]
                 path_distances.append(
                     (iter_source_path[i], iter_target_path[i], distances[i])
                 )
@@ -141,7 +141,7 @@ class Worker(common_base.Base):
                 f.write(f"{line}\n")
 
         self.logger.info(
-            f"With {len(distances)} pictures, the max, mean, min distances are {sorted_distances[-1][2]:.5f}, {sum_difference/len(sorted_distances):.5f} and {sorted_distances[0][2]:.5f}"
+            f"With {len(sorted_distances)} pictures, the max, mean, min distances are {sorted_distances[-1][2]:.5f}, {distance_sum/len(sorted_distances):.5f} and {sorted_distances[0][2]:.5f}"
         )
 
 
