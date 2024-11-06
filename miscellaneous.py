@@ -66,6 +66,8 @@ class Worker(common_base.Base):
 
             distances = self.effectiveness.get_image_distance(source_imgs, swap_imgs)
             for i in range(len(distances)):
+                if distances[i] == math.nan:
+                    continue
                 tqdm.write(f"{iter_source_path[i]} distance: {distances[i]:.5f}")
                 sum_difference += distances[i]
                 path_distances.append((iter_source_path[i], distances[i]))

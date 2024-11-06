@@ -3,6 +3,7 @@ import os
 import torch
 import lpips
 import numpy as np
+import math
 
 from facenet_pytorch import MTCNN, InceptionResnetV1
 from skimage import metrics
@@ -176,12 +177,15 @@ class Effectiveness:
         imgs2_ndarray = imgs2.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
 
         for i in range(imgs1_ndarray.shape[0]):
-            img1_cropped = self.mtcnn(imgs1_ndarray[i]).unsqueeze(0).cuda()
-            img2_cropped = self.mtcnn(imgs2_ndarray[i]).unsqueeze(0).cuda()
+            try:
+                img1_cropped = self.mtcnn(imgs1_ndarray[i]).unsqueeze(0).cuda()
+                img2_cropped = self.mtcnn(imgs2_ndarray[i]).unsqueeze(0).cuda()
 
-            img1_embeddings = self.FaceVerification(img1_cropped).detach().cpu()
-            img2_embeddings = self.FaceVerification(img2_cropped).detach().cpu()
+                img1_embeddings = self.FaceVerification(img1_cropped).detach().cpu()
+                img2_embeddings = self.FaceVerification(img2_cropped).detach().cpu()
 
-            distances.append((img1_embeddings - img2_embeddings).norm().item())
+                distances.append((img1_embeddings - img2_embeddings).norm().item())
+            except Exception as e:
+                distances.append(math.nan)
 
         return distances
