@@ -111,11 +111,18 @@ class Worker(common_base.Base):
             ]
 
             source_imgs = super()._load_imgs(iter_source_path)
-            source_identity = super()._get_imgs_identity(source_imgs)
             target_imgs = super()._load_imgs(iter_target_path)
-            swap_imgs = self.target(None, target_imgs, source_identity, None, True)
 
-            distances = self.effectiveness.get_image_distance(source_imgs, swap_imgs)
+            if version in [1, 2]:
+                source_identity = super()._get_imgs_identity(source_imgs)
+                swap_imgs = self.target(None, target_imgs, source_identity, None, True)
+                distances = self.effectiveness.get_image_distance(
+                    source_imgs, swap_imgs
+                )
+            else:
+                distances = self.effectiveness.get_image_distance(
+                    source_imgs, target_imgs
+                )
             for i in range(len(distances)):
                 if distances[i] == math.nan:
                     continue
