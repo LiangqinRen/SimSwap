@@ -87,7 +87,9 @@ class Worker(common_base.Base):
             return source_imgs_path, target_imgs_path
 
     def calculate_effectiveness_threshold(self, version: int) -> None:
-        self.logger.info(inspect.currentframe().f_code.co_name, version)
+        self.logger.info(
+            f"{inspect.currentframe().f_code.co_name} version {version}",
+        )
         train_set_path = join(self.args.data_dir, "train")
         all_people = sorted(os.listdir(train_set_path))
 
