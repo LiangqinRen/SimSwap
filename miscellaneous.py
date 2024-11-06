@@ -48,22 +48,27 @@ class Worker(common_base.Base):
             )
             imgs_path.extend([join(people_path, name) for name in selected_imgs_name])
 
-        distances = []
+        path_distances = []
         sum_difference = 0
-        for path in tqdm(imgs_path):
-            source_img = super()._load_imgs([path])
-            source_identity = super()._get_imgs_identity(source_img)
-            target_img = super()._load_imgs([path])
-            swap_img = self.target(None, target_img, source_identity, None, True)
+        total_batch = len(imgs_path) // self.args.batch_size
+        for i in tqdm(range(total_batch)):
+            iter_source_path = imgs_path[
+                i * self.args.batch_size : (i + 1) * self.args.batch_size
+            ]
+            iter_target_path = imgs_path[
+                i * self.args.batch_size : (i + 1) * self.args.batch_size
+            ]
 
-            distance = self.effectiveness.get_image_distance(source_img, swap_img)
-            if math.isinf(distance):
-                continue
+            source_imgs = super()._load_imgs(iter_source_path)
+            source_identity = super()._get_imgs_identity(source_imgs)
+            target_imgs = super()._load_imgs(iter_target_path)
+            swap_imgs = self.target(None, target_imgs, source_identity, None, True)
 
-            sum_difference += distance
-
-            distances.append((path, distance))
-            tqdm.write(f"{path} distance: {distance:.5f}")
+            distances = self.effectiveness.get_image_distance(source_imgs, swap_imgs)
+            for i in range(len(distances)):
+                tqdm.write(f"{iter_source_path[i]} distance: {distances[i]:.5f}")
+                sum_difference += distances[i]
+                path_distances.append((iter_source_path[i], distances[i]))
 
         sorted_distances = sorted(distances, key=lambda x: x[1])
 

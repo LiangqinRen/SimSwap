@@ -39,7 +39,7 @@ then
     python main.py --method $mode --gan_test_models "gan_target_no_all.pth" --batch_size 25
 elif [[ $mode == 'worker' ]]
 then
-    python main.py --method $mode
+    python main.py --method $mode --batch_size 30
 else
     echo "Unrecognized mode!"
 fi

@@ -165,17 +165,23 @@ class Effectiveness:
     def _is_tensor_valid(self, tensor: torch.tensor) -> bool:
         return tensor is not None and isinstance(tensor, torch.Tensor)
 
-    def get_image_distance(self, img1: torch.tensor, img2: torch.tensor) -> float:
-        try:
-            img1_ndarray = img1.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
-            img2_ndarray = img2.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
+    def get_image_distance(
+        self, imgs1: torch.tensor, imgs2: torch.tensor
+    ) -> list[float]:
+        distances = []
+        if imgs1.shape != imgs2.shape:
+            return distances
 
-            img1_cropped = self.mtcnn(img1_ndarray[0])[None, :].cuda()
-            img2_cropped = self.mtcnn(img2_ndarray[0])[None, :].cuda()
+        imgs1_ndarray = imgs1.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
+        imgs2_ndarray = imgs2.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
+
+        for i in range(imgs1_ndarray.shape[0]):
+            img1_cropped = self.mtcnn(imgs1_ndarray[i]).unsqueeze(0).cuda()
+            img2_cropped = self.mtcnn(imgs2_ndarray[i]).unsqueeze(0).cuda()
 
             img1_embeddings = self.FaceVerification(img1_cropped).detach().cpu()
             img2_embeddings = self.FaceVerification(img2_cropped).detach().cpu()
 
-            return (img1_embeddings - img2_embeddings).norm().item()
-        except:
-            return float("inf")
+            distances.append((img1_embeddings - img2_embeddings).norm().item())
+
+        return distances
