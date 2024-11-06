@@ -87,7 +87,6 @@ class Worker(common_base.Base):
             return source_imgs_path, target_imgs_path
 
     def calculate_effectiveness_threshold(self, version: int) -> None:
-        # Swap with itself, calculate the distances, sort them in ascending order, and select the top 99%
         self.logger.info(inspect.currentframe().f_code.co_name, version)
         train_set_path = join(self.args.data_dir, "train")
         all_people = sorted(os.listdir(train_set_path))
@@ -118,13 +117,17 @@ class Worker(common_base.Base):
             for i in range(len(distances)):
                 if distances[i] == math.nan:
                     continue
-                tqdm.write(f"{iter_source_path[i]} distance: {distances[i]:.5f}")
+                tqdm.write(
+                    f"{iter_source_path[i]}, {iter_target_path[i]} distance: {distances[i]:.5f}"
+                )
                 sum_difference += distances[i]
-                path_distances.append((iter_source_path[i], distances[i]))
+                path_distances.append(
+                    (iter_source_path[i], iter_target_path[i], distances[i])
+                )
 
-        sorted_distances = sorted(path_distances, key=lambda x: x[1])
+        sorted_distances = sorted(path_distances, key=lambda x: x[2])
 
-        with open(join(self.args.log_dir, "v1_distance.txt"), "w") as f:
+        with open(join(self.args.log_dir, f"v{version}_distance.txt"), "w") as f:
             for line in sorted_distances:
                 f.write(f"{line}\n")
 
