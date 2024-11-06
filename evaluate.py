@@ -86,7 +86,7 @@ class Utility:
 
 
 class Effectiveness:
-    def __init__(self, opt):
+    def __init__(self):
         self.mtcnn = MTCNN(
             image_size=160,
             device="cuda",
@@ -165,17 +165,17 @@ class Effectiveness:
     def _is_tensor_valid(self, tensor: torch.tensor) -> bool:
         return tensor is not None and isinstance(tensor, torch.Tensor)
 
-    def get_image_difference(self, source: torch.tensor, swap: torch.tensor) -> float:
+    def get_image_distance(self, img1: torch.tensor, img2: torch.tensor) -> float:
         try:
-            source_ndarray = source.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
-            swap_ndarray = swap.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
+            img1_ndarray = img1.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
+            img2_ndarray = img2.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
 
-            source_cropped = self.mtcnn(source_ndarray[0])[None, :].cuda()
-            swap_cropped = self.mtcnn(swap_ndarray[0])[None, :].cuda()
+            img1_cropped = self.mtcnn(img1_ndarray[0])[None, :].cuda()
+            img2_cropped = self.mtcnn(img2_ndarray[0])[None, :].cuda()
 
-            source_embeddings = self.FaceVerification(source_cropped).detach().cpu()
-            swap_embeddings = self.FaceVerification(swap_cropped).detach().cpu()
+            img1_embeddings = self.FaceVerification(img1_cropped).detach().cpu()
+            img2_embeddings = self.FaceVerification(img2_cropped).detach().cpu()
 
-            return (source_embeddings - swap_embeddings).norm().item()
+            return (img1_embeddings - img2_embeddings).norm().item()
         except:
             return float("inf")

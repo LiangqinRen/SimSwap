@@ -1,9 +1,7 @@
 import os
 import random
-import time
-import math
+
 import cv2
-import shutil
 
 import torch
 import torchvision
@@ -57,25 +55,7 @@ class SimSwapDefense(nn.Module):
         self.GAN_G = Generator(input_nc=3, output_nc=3, epsilon=self.gan_rgb_limits)
 
         self.utility = Utility()
-        self.effectiveness = Effectiveness(None)
-
-    def split_dataset(self) -> None:
-        all_people = sorted(os.listdir(self.dataset_dir))
-        testset_people = random.sample(all_people, self.args.testset_people_count)
-
-        os.makedirs(self.trainset_dir, exist_ok=True)
-        os.makedirs(self.testset_dir, exist_ok=True)
-
-        for i, people in enumerate(all_people, start=1):
-            self.logger.info(f"{i:4}/{len(all_people):4}|Copy folder {people}")
-            shutil.copytree(
-                join(self.dataset_dir, people),
-                (
-                    join(self.testset_dir, people)
-                    if people in testset_people
-                    else join(self.trainset_dir, people)
-                ),
-            )
+        self.effectiveness = Effectiveness()
 
     def _load_imgs(self, imgs_path: list[str]) -> torch.tensor:
         transformer = transforms.Compose([transforms.ToTensor()])
@@ -90,163 +70,6 @@ class SimSwapDefense(nn.Module):
         prior = prior / torch.norm(prior, p=2, dim=1)[0]
 
         return prior.cuda()
-
-    def _save_imgs(self, imgs: list[torch.tensor]) -> None:
-        log_dir = self.args.log_dir
-        if len(imgs) == 3:
-            source, target, swap = imgs[:]
-            results = torch.cat((source, target, swap), dim=0)
-            save_image(results, join(log_dir, "image", "compare.png"))
-
-            save_image(source, join(log_dir, "image", "source.png"))
-            save_image(target, join(log_dir, "image", "target.png"))
-            save_image(swap, join(log_dir, "image", "swap.png"))
-        elif len(imgs) == 5:  # GAN test
-            source, target, swap, pert, pert_swap = imgs[:]
-            results = torch.cat((source, target, swap, pert, pert_swap), dim=0)
-            save_image(results, join(log_dir, "image", "compare.png"), nrow=3)
-
-            for i, img in enumerate(source, 1):
-                save_path = join(log_dir, "image", f"source_{i}.png")
-                save_image(img, save_path)
-            for i, img in enumerate(target, 1):
-                save_path = join(log_dir, "image", f"target_{i}.png")
-                save_image(img, save_path)
-            for i, img in enumerate(swap, 1):
-                save_path = join(log_dir, "image", f"swap_{i}.png")
-                save_image(img, save_path)
-            for i, img in enumerate(pert, 1):
-                save_path = join(log_dir, "image", f"pert_{i}.png")
-                save_image(img, save_path)
-            for i, img in enumerate(pert_swap, 1):
-                save_path = join(log_dir, "image", f"pert_swap_{i}.png")
-                save_image(img, save_path)
-        elif len(imgs) == 7:
-            source, target, swap, mimic, mimic_swap, pert, pert_swap = imgs[:]
-            results = torch.cat((source, target, swap, mimic, pert, pert_swap), dim=0)
-            save_image(results, join(log_dir, "image", "compare.png"))
-
-            save_image(source, join(log_dir, "image", "source.png"))
-            save_image(target, join(log_dir, "image", "target.png"))
-            save_image(swap, join(log_dir, "image", "swap.png"))
-            save_image(mimic, join(log_dir, "image", "mimic.png"))
-            save_image(mimic_swap, join(log_dir, "image", "mimic_swap.png"))
-            save_image(pert, join(log_dir, "image", "pert.png"))
-            save_image(pert_swap, join(log_dir, "image", "pert_swap.png"))
-        elif len(imgs) == 13:
-            (
-                source,
-                target,
-                swap,
-                pert,
-                pert_swap,
-                noise_pert,
-                noise_pert_swap,
-                blur_pert,
-                blur_pert_swap,
-                compress_pert,
-                compress_pert_swap,
-                rotate_pert,
-                rotate_pert_swap,
-            ) = imgs[:]
-
-            results = torch.cat(
-                (
-                    source,
-                    target,
-                    swap,
-                    pert,
-                    pert_swap,
-                    noise_pert,
-                    noise_pert_swap,
-                    blur_pert,
-                    blur_pert_swap,
-                    compress_pert,
-                    compress_pert_swap,
-                    rotate_pert,
-                    rotate_pert_swap,
-                ),
-                dim=0,
-            )
-            save_image(results, join(log_dir, "image", "compare.png"), nrow=3)
-
-            for i, img in enumerate(source, 1):
-                save_image(img, join(log_dir, "image", f"source_{i}.png"))
-            for i, img in enumerate(target, 1):
-                save_image(img, join(log_dir, "image", f"target_{i}.png"))
-            for i, img in enumerate(swap, 1):
-                save_image(img, join(log_dir, "image", f"swap_{i}.png"))
-            for i, img in enumerate(pert, 1):
-                save_image(img, join(log_dir, "image", f"pert_{i}.png"))
-            for i, img in enumerate(pert_swap, 1):
-                save_image(img, join(log_dir, "image", f"pert_swap_{i}.png"))
-            for i, img in enumerate(noise_pert, 1):
-                save_image(img, join(log_dir, "image", f"noise_pert_{i}.png"))
-            for i, img in enumerate(noise_pert_swap, 1):
-                save_image(img, join(log_dir, "image", f"noise_pert_swap_{i}.png"))
-            for i, img in enumerate(blur_pert, 1):
-                save_image(img, join(log_dir, "image", f"blur_pert_{i}.png"))
-            for i, img in enumerate(blur_pert_swap, 1):
-                save_image(img, join(log_dir, "image", f"blur_pert_swap_{i}.png"))
-            for i, img in enumerate(compress_pert, 1):
-                save_image(img, join(log_dir, "image", f"compress_pert_{i}.png"))
-            for i, img in enumerate(compress_pert_swap, 1):
-                save_image(img, join(log_dir, "image", f"compress_pert_swap_{i}.png"))
-            for i, img in enumerate(rotate_pert, 1):
-                save_image(img, join(log_dir, "image", f"rotate_pert_{i}.png"))
-            for i, img in enumerate(rotate_pert_swap, 1):
-                save_image(img, join(log_dir, "image", f"rotate_pert_swap_{i}.png"))
-
-    def swap(self):
-        self.target.eval()
-
-        source_img = self._load_imgs([join(self.args.data_dir, self.args.swap_source)])
-        target_img = self._load_imgs([join(self.args.data_dir, self.args.swap_target)])
-        source_identity = self._get_imgs_identity(source_img)
-
-        swap_img = self.target(None, target_img, source_identity, None, True)
-
-        self._save_imgs([source_img, target_img, swap_img])
-
-    def calculate_effectiveness_threshold(self) -> None:
-        dataset_path = join(self.args.data_dir, "vggface2_crop_224")
-        all_people = sorted(os.listdir(dataset_path))
-        imgs_path = []
-        for people in all_people:
-            people_path = join(dataset_path, people)
-            all_imgs_name = sorted(os.listdir(people_path))
-            selected_imgs_name = random.sample(
-                all_imgs_name, min(self.args.metric_people_image, len(all_imgs_name))
-            )
-            imgs_path.extend([join(people_path, name) for name in selected_imgs_name])
-
-        differences = []
-        min_difference, max_difference, sum_difference = 1, 0, 0
-        inf = float("inf")
-        for path in tqdm(imgs_path):
-            source_img = self._load_imgs([path])
-            source_identity = self._get_imgs_identity(source_img)
-            target_img = self._load_imgs([path])
-            swap_img = self.target(None, target_img, source_identity, None, True)
-
-            difference = self.effectiveness.get_image_difference(source_img, swap_img)
-            if math.isinf(difference):
-                continue
-
-            min_difference = min(difference, min_difference)
-            max_difference = max(difference, max_difference)
-            sum_difference += difference
-
-            differences.append((path, difference))
-            tqdm.write(f"{path} difference {difference:.5f}")
-
-        with open(join(self.args.log_dir, "difference.txt"), "w") as f:
-            for line in differences:
-                f.write(f"{line}\n")
-
-        self.logger.info(
-            f"With {len(differences)} pictures, the max, mean, min differences are {max_difference:.5f}, {sum_difference/len(differences):.5f} and {min_difference:.5f}"
-        )
 
     def __save_pgd_samples(self, imgs: list[torch.tensor]) -> None:
         img_names = [
@@ -875,40 +698,6 @@ class SimSwapDefense(nn.Module):
                 f"Average of {self.args.batch_size * (i + 1)} pictures: pert utility(mse, psnr, ssim, lpips): {tuple(f'{x / (i + 1):.3f}' for x in data['pert_utility'])}, pert as source swap utility(mse, psnr, ssim, lpips): {tuple(f'{x / (i + 1):.3f}' for x in data['pert_as_src_swap_utility'])}, pert as target swap utility(mse, psnr, ssim, lpips): {tuple(f'{x / (i + 1):.3f}' for x in data['pert_as_tgt_swap_utility'])}, pert as src effectiveness(pert, swap, pert swap, anchor): {tuple(f'{x / (i + 1):.3f}' for x in data['pert_as_src_effectiveness'])}, pert as tgt effectiveness(swap, pert swap): {data['pert_as_tgt_effectiveness'][1] / (i + 1):.3f}, {data['pert_as_tgt_effectiveness'][2] / (i + 1):.3f}"
             )
 
-    def _get_random_imgs_path(self) -> tuple[list[str], list[str]]:
-        people = sorted(os.listdir(self.dataset_dir))
-        random.shuffle(people)
-
-        index = 0
-        people_to_select = self.args.pgd_metric_people * 2
-        selected_imgs_path = []
-        while people_to_select > 0:
-            people_to_select -= 1
-            imgs_path = sorted(os.listdir(join(self.dataset_dir, people[index])))
-            while len(imgs_path) < self.args.pgd_people_imgs:
-                index += 1
-                imgs_path = sorted(os.listdir(join(self.dataset_dir, people[index])))
-
-            selected_imgs_name = random.sample(imgs_path, self.args.pgd_people_imgs)
-            selected_imgs_path.extend(
-                [
-                    join(self.dataset_dir, people[index], path)
-                    for path in selected_imgs_name
-                ]
-            )
-            index += 1
-
-        source_imgs_path = selected_imgs_path[
-            : self.args.pgd_metric_people * self.args.pgd_people_imgs
-        ]
-        target_imgs_path = selected_imgs_path[
-            self.args.pgd_metric_people * self.args.pgd_people_imgs :
-        ]
-
-        assert len(source_imgs_path) == len(target_imgs_path)
-
-        return source_imgs_path, target_imgs_path
-
     def _calculate_utility(
         self, clean_imgs: torch.tensor, pert_imgs: torch.tensor
     ) -> float:
@@ -1292,63 +1081,6 @@ class SimSwapDefense(nn.Module):
             self.logger.info(
                 f"Average distance of {self.args.batch_size * (i + 1)} pictures (swap to source, target, anchor): {sum(distance_between_swap_to['source'])/len(distance_between_swap_to['source']):.5f}, {sum(distance_between_swap_to['target'])/len(distance_between_swap_to['target']):.5f}, {sum(distance_between_swap_to['anchor'])/len(distance_between_swap_to['anchor']):.5f}, (pert swap to source, target, anchor): {sum(distance_between_pert_swap_to['source'])/len(distance_between_pert_swap_to['source']):.5f}, {sum(distance_between_pert_swap_to['target'])/len(distance_between_pert_swap_to['target']):.5f}, {sum(distance_between_pert_swap_to['anchor'])/len(distance_between_pert_swap_to['anchor']):.5f}"
             )
-
-    def pgd_target_single(self, loss_weights=[100, 1]) -> None:
-        self.logger.info(f"loss_weights: {loss_weights}")
-
-        self.target.cuda().eval()
-        l2_loss = nn.MSELoss().cuda()
-
-        source_img = self._load_imgs([join(self.args.data_dir, self.args.pgd_source)])
-        mimic_img = self._load_imgs([join(self.args.data_dir, self.args.pgd_mimic)])
-        target_img = self._load_imgs([join(self.args.data_dir, self.args.pgd_target)])
-
-        source_identity = self._get_imgs_identity(source_img)
-
-        x_img = target_img.clone().detach()
-        epsilon = (
-            self.args.pgd_epsilon * (torch.max(target_img) - torch.min(target_img)) / 2
-        )
-        for iter in range(self.args.epochs):
-            x_img.requires_grad = True
-
-            x_latent_code = self.target.netG.encoder(x_img)
-            mimic_latent_code = self.target.netG.encoder(mimic_img)
-            pert_diff_loss = l2_loss(x_img, target_img.detach())
-            latent_code_diff_loss = l2_loss(x_latent_code, mimic_latent_code.detach())
-            loss = (
-                loss_weights[0] * pert_diff_loss
-                + loss_weights[1] * latent_code_diff_loss
-            )
-
-            loss.backward(retain_graph=True)
-
-            x_img = x_img.clone().detach() + epsilon * x_img.grad.sign()
-            x_img = torch.clamp(
-                x_img,
-                min=target_img - self.args.pgd_limit,
-                max=target_img + self.args.pgd_limit,
-            )
-            self.logger.info(
-                f"[Iter {iter:4}]loss: {loss:.5f}({loss_weights[0] * pert_diff_loss.item():.5f}, {loss_weights[1] * latent_code_diff_loss.item():.5f})"
-            )
-
-        source_swap_img = self.target(None, target_img, source_identity, None, True)
-        mimic_swap_img = self.target(None, mimic_img, source_identity, None, True)
-
-        x_swap_img = self.target(None, x_img, source_identity, None, True)
-
-        self._save_imgs(
-            [
-                source_img,
-                target_img,
-                source_swap_img,
-                mimic_img,
-                mimic_swap_img,
-                x_img,
-                x_swap_img,
-            ]
-        )
 
     def pgd_target_metric(self, loss_weights=[5000, 1]):
         self.logger.info(f"loss_weights: {loss_weights}")
