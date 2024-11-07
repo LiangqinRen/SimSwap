@@ -5,6 +5,7 @@ import random
 import cv2
 import torch
 import torchvision
+import math
 
 import numpy as np
 import torch.nn as nn
@@ -334,9 +335,11 @@ class SimSwapDefense(Base, nn.Module):
         for i in range(imgs.shape[0]):
             distances = []
             for j in range(anchor_imgs.shape[0]):
-                distance = self.effectiveness.get_distance(
+                distance = self.effectiveness.get_image_distance(
                     imgs_ndarray[i], anchor_img_ndarray[j]
                 )
+                if distance is math.nan:
+                    continue
                 distances.append(distance)
 
             best_anchor_idx = 0

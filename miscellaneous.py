@@ -116,11 +116,11 @@ class Worker(common_base.Base):
             if version in [1, 2]:
                 source_identity = super()._get_imgs_identity(source_imgs)
                 swap_imgs = self.target(None, target_imgs, source_identity, None, True)
-                distances = self.effectiveness.get_image_distance(
+                distances = self.effectiveness.get_images_distance(
                     source_imgs, swap_imgs
                 )
             else:
-                distances = self.effectiveness.get_image_distance(
+                distances = self.effectiveness.get_images_distance(
                     source_imgs, target_imgs
                 )
             for i in range(len(distances)):

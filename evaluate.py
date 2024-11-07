@@ -126,23 +126,6 @@ class Effectiveness:
         IMG2 = torch.stack(IMG2, dim=0).cuda()
         return IMG1, IMG2
 
-    def get_distance(self, img1, img2):
-        img1_cropped = self.mtcnn(img1).unsqueeze(0)
-        img2_cropped = self.mtcnn(img2).unsqueeze(0)
-
-        if img1_cropped is None:
-            img1_cropped = torch.ones((1, 3, 160, 160))
-        if img2_cropped is None:
-            img2_cropped = torch.ones((1, 3, 160, 160))
-
-        img1_embeddings = self.FaceVerification(img1_cropped.cuda())
-        img2_embeddings = self.FaceVerification(img2_cropped.cuda())
-
-        with torch.no_grad():
-            distance = (img1_embeddings - img2_embeddings).norm().item()
-
-        return distance
-
     def compare(self, imgs1, imgs2):
         count = 0
         img1_cropped, img2_cropped = self.detect_faces(imgs1, imgs2)
@@ -162,13 +145,22 @@ class Effectiveness:
 
         return count / img1_cropped.shape[0], sum(dists) / len(dists)
 
-    def _is_ndarray_valid(self, ndarray: np.ndarray) -> bool:
-        return ndarray is not None and isinstance(ndarray, np.ndarray)
+    def get_image_distance(self, img1: np.ndarray, img2: np.ndarray):
+        img1_cropped = self.mtcnn(img1)
+        img2_cropped = self.mtcnn(img2)
 
-    def _is_tensor_valid(self, tensor: torch.tensor) -> bool:
-        return tensor is not None and isinstance(tensor, torch.Tensor)
+        if img1_cropped is None or img2_cropped is None:
+            return math.nan
 
-    def get_image_distance(
+        img1_embeddings = self.FaceVerification(img1_cropped.unsqueeze(0).cuda())
+        img2_embeddings = self.FaceVerification(img2_cropped.unsqueeze(0).cuda())
+
+        with torch.no_grad():
+            distance = (img1_embeddings - img2_embeddings).norm().item()
+
+        return distance
+
+    def get_images_distance(
         self, imgs1: torch.tensor, imgs2: torch.tensor
     ) -> list[float]:
         distances = []
