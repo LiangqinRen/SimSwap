@@ -1,33 +1,26 @@
+from common_base import Base
+
 import os
 import random
-
 import cv2
-
 import torch
 import torchvision
 
 import numpy as np
 import torch.nn as nn
 import torch.optim as optim
-import PIL.Image as Image
 import torch.nn.functional as F
 import torchvision.transforms as transforms
-from os.path import join
 
+from os.path import join
 from torchvision.utils import save_image
-from options.test_options import TestOptions
-from models.models import create_model
 from models.fs_networks import Generator
 from tqdm import tqdm
 
-from evaluate import Utility, Effectiveness
 
-
-class SimSwapDefense(nn.Module):
+class SimSwapDefense(Base, nn.Module):
     def __init__(self, args, logger):
-        super(SimSwapDefense, self).__init__()
-        self.args = args
-        self.logger = logger
+        super().__init__(args, logger)
 
         self.samples_dir = join(args.data_dir, "samples")
         self.dataset_dir = join(args.data_dir, "vggface2_crop_224")
@@ -51,25 +44,7 @@ class SimSwapDefense(nn.Module):
             0.025,
         ]  # pert, swap diff, latent diff, rotate latent diff
 
-        self.target = create_model(TestOptions().parse())
         self.GAN_G = Generator(input_nc=3, output_nc=3, epsilon=self.gan_rgb_limits)
-
-        self.utility = Utility()
-        self.effectiveness = Effectiveness()
-
-    def _load_imgs(self, imgs_path: list[str]) -> torch.tensor:
-        transformer = transforms.Compose([transforms.ToTensor()])
-        imgs = [transformer(Image.open(path).convert("RGB")) for path in imgs_path]
-        imgs = torch.stack(imgs)
-
-        return imgs.cuda()
-
-    def _get_imgs_identity(self, img: torch.tensor) -> torch.tensor:
-        img_downsample = F.interpolate(img, size=(112, 112))
-        prior = self.target.netArc(img_downsample)
-        prior = prior / torch.norm(prior, p=2, dim=1)[0]
-
-        return prior.cuda()
 
     def __save_pgd_samples(self, imgs: list[torch.tensor]) -> None:
         img_names = [
@@ -366,8 +341,8 @@ class SimSwapDefense(nn.Module):
 
             best_anchor_idx = 0
             for i, distance in enumerate(distances):
-                if abs(distances[i] - 0.91906) < abs(
-                    distances[best_anchor_idx] - 0.91906
+                if abs(distances[i] - self.args.effectiveness_threshold) < abs(
+                    distances[best_anchor_idx] - self.args.effectiveness_threshold
                 ):
                     best_anchor_idx = i
 

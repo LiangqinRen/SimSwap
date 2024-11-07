@@ -87,7 +87,9 @@ class Utility:
 
 
 class Effectiveness:
-    def __init__(self):
+    def __init__(self, threshold):
+        self.threshold = threshold
+
         self.mtcnn = MTCNN(
             image_size=160,
             device="cuda",
@@ -155,7 +157,7 @@ class Effectiveness:
             ]
 
             for dist in dists:
-                if dist < 0.91906:
+                if dist < self.threshold:
                     count += 1
 
         return count / img1_cropped.shape[0], sum(dists) / len(dists)

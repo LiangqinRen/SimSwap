@@ -24,7 +24,7 @@ class Base:
         self.target = create_model(TestOptions().parse())
 
         self.utility = Utility()
-        self.effectiveness = Effectiveness()
+        self.effectiveness = Effectiveness(args.effectiveness_threshold)
 
     def _load_imgs(self, imgs_path: list[str]) -> torch.tensor:
         transformer = transforms.Compose([transforms.ToTensor()])
