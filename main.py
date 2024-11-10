@@ -16,12 +16,12 @@ def main():
 
     defense = simswap_defense.SimSwapDefense(args, logger)
     defense_functions = {
-        "pgd_source_distance": defense.pgd_source_distance,
         "pgd_both_sample": defense.pgd_both_sample,
         "pgd_both_metric": defense.pgd_both_metric,
-        "pgd_source_robustness_sample": defense.pgd_source_robustness_sample,
-        "pgd_target_robustness_sample": defense.pgd_target_robustness_sample,
-        "pgd_source_robustness_metric": defense.pgd_source_robustness_metric,
+        "pgd_both_robustness_sample": defense.pgd_both_robustness_sample,
+        "pgd_both_robustness_metric": defense.pgd_both_robustness_metric,
+        #
+        "pgd_source_distance": defense.pgd_source_distance,
         "pgd_target_robustness_metric": defense.pgd_target_robustness_metric,
         "gan_source_sample": defense.gan_source_sample,
         "gan_target_sample": defense.gan_target_sample,

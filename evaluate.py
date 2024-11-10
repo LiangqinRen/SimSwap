@@ -8,6 +8,7 @@ import math
 from facenet_pytorch import MTCNN, InceptionResnetV1
 from skimage import metrics
 from torchvision.models import vgg16, VGG16_Weights
+from torch import tensor
 
 
 class Utility:
@@ -55,7 +56,7 @@ class Utility:
         )
 
     def calculate_utility(self, imgs1: torch.tensor, imgs2: torch.tensor):
-        utilities = {"mse": [], "ssim": [], "psnr": [], "lpips": []}
+        utilities = {"mse": [], "psnr": [], "ssim": [], "lpips": []}
 
         imgs1_ndarray = imgs1.detach().cpu().numpy().transpose(0, 2, 3, 1)
         imgs2_ndarray = imgs2.detach().cpu().numpy().transpose(0, 2, 3, 1)
@@ -145,6 +146,22 @@ class Effectiveness:
 
         return count / img1_cropped.shape[0], sum(dists) / len(dists)
 
+    def count_matching_imgs(self, imgs1, imgs2):
+        count = 0
+        img1_cropped, img2_cropped = self.detect_faces(imgs1, imgs2)
+        with torch.no_grad():
+            img1_embeddings = self.FaceVerification(img1_cropped).detach().cpu()
+            img2_embeddings = self.FaceVerification(img2_cropped).detach().cpu()
+
+            dists = [
+                (e1 - e2).norm().item()
+                for e1, e2 in zip(img1_embeddings, img2_embeddings)
+            ]
+
+            count += sum(1 for dist in dists if dist < self.threshold)
+
+        return count / img1_cropped.shape[0]
+
     def get_image_distance(self, img1: np.ndarray, img2: np.ndarray):
         img1_cropped = self.mtcnn(img1)
         img2_cropped = self.mtcnn(img2)
@@ -183,3 +200,42 @@ class Effectiveness:
                 distances.append(math.nan)
 
         return distances
+
+    def calculate_effectiveness(
+        self,
+        source_imgs: tensor,
+        pert_imgs: tensor,
+        swap_imgs: tensor,
+        pert_swap_imgs: tensor,
+        anchor_imgs: tensor,
+    ):
+        effectivenesses = {"pert": 0, "swap": 0, "pert_swap": 0, "anchor": 0}
+
+        source_imgs_ndarray = (
+            source_imgs.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
+        )
+        pert_imgs_ndarray = (
+            pert_imgs.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
+        )
+        swap_imgs_ndarray = (
+            swap_imgs.detach().cpu().numpy().transpose(0, 2, 3, 1)
+        ) * 255.0
+        pert_swap_imgs_ndarray = (
+            pert_swap_imgs.detach().cpu().numpy().transpose(0, 2, 3, 1)
+        ) * 255.0
+        anchor_imgs_ndarray = (
+            anchor_imgs.detach().cpu().numpy().transpose(0, 2, 3, 1)
+        ) * 255.0
+
+        pert = self.count_matching_imgs(source_imgs_ndarray, pert_imgs_ndarray)
+        effectivenesses["pert"] = pert
+        swap = self.count_matching_imgs(source_imgs_ndarray, swap_imgs_ndarray)
+        effectivenesses["swap"] = swap
+        pert_swap = self.count_matching_imgs(
+            source_imgs_ndarray, pert_swap_imgs_ndarray
+        )
+        effectivenesses["pert_swap"] = pert_swap
+        anchor = self.count_matching_imgs(anchor_imgs_ndarray, pert_swap_imgs_ndarray)
+        effectivenesses["anchor"] = anchor
+
+        return effectivenesses
