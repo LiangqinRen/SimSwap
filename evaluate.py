@@ -1,37 +1,96 @@
 import cv2
 import os
 import torch
+import lpips
 import numpy as np
+import math
 
 from facenet_pytorch import MTCNN, InceptionResnetV1
 from skimage import metrics
+from torchvision.models import vgg16, VGG16_Weights
+from torch import tensor
 
 
 class Utility:
+    import warnings
+
+    warnings.filterwarnings(
+        "ignore",
+        category=UserWarning,
+        message="The parameter 'pretrained' is deprecated",
+    )
+    warnings.filterwarnings(
+        "ignore",
+        category=UserWarning,
+        message="Arguments other than a weight enum or `None` for 'weights' are deprecated",
+    )
+
+    lpips_distance = lpips.LPIPS(net="vgg").cuda()
+
     def __init__(self):
         pass
 
     def compare(self, imgs1_list, imgs2_list):
-        MSE = []
-        SSIM = []
-        PSNR = []
+        utilities = {"mse": [], "ssim": [], "psnr": []}
         for idx in range(min(imgs1_list.shape[0], imgs2_list.shape[0])):
             img1 = imgs1_list[idx]
             img2 = imgs2_list[idx]
             mse = metrics.mean_squared_error(img1, img2)
+            utilities["mse"].append(mse)
+
             psnr = metrics.peak_signal_noise_ratio(img1, img2, data_range=255)
+            utilities["psnr"].append(psnr)
+
             ssim = metrics.structural_similarity(
                 img1, img2, channel_axis=2, multichannel=True, data_range=1
             )
-            MSE.append(mse)
-            SSIM.append(ssim)
-            PSNR.append(psnr)
+            utilities["ssim"].append(ssim)
 
-        return np.mean(MSE), np.mean(PSNR), np.mean(SSIM)
+        for i in utilities:
+            utilities[i] = np.mean(utilities[i])
+
+        return (
+            utilities["mse"],
+            utilities["ssim"],
+            utilities["psnr"],
+        )
+
+    def calculate_utility(self, imgs1: torch.tensor, imgs2: torch.tensor):
+        utilities = {"mse": [], "psnr": [], "ssim": [], "lpips": []}
+
+        imgs1_ndarray = imgs1.detach().cpu().numpy().transpose(0, 2, 3, 1)
+        imgs2_ndarray = imgs2.detach().cpu().numpy().transpose(0, 2, 3, 1)
+        for i in range(min(imgs1.shape[0], imgs2.shape[0])):
+            mse = metrics.mean_squared_error(imgs1_ndarray[i], imgs2_ndarray[i])
+            utilities["mse"].append(mse)
+
+            psnr = metrics.peak_signal_noise_ratio(
+                imgs1_ndarray[i], imgs2_ndarray[i], data_range=255
+            )
+            utilities["psnr"].append(psnr)
+
+            ssim = metrics.structural_similarity(
+                imgs1_ndarray[i],
+                imgs2_ndarray[i],
+                channel_axis=2,
+                multichannel=True,
+                data_range=1,
+            )
+            utilities["ssim"].append(ssim)
+
+            lpips_score = self.lpips_distance(imgs1[i], imgs2[i])
+            utilities["lpips"].append(lpips_score.detach().cpu().numpy())
+
+        for i in utilities:
+            utilities[i] = np.mean(utilities[i])
+
+        return utilities
 
 
 class Effectiveness:
-    def __init__(self, opt):
+    def __init__(self, threshold):
+        self.threshold = threshold
+
         self.mtcnn = MTCNN(
             image_size=160,
             device="cuda",
@@ -43,26 +102,7 @@ class Effectiveness:
         ).cuda()
         self.FaceVerification.eval()
 
-    def compare(self, imgs1, imgs2):
-        count = 0
-        img1_cropped, img2_cropped = self.detect_face(imgs1, imgs2)
-
-        with torch.no_grad():
-            img1_embeddings = self.FaceVerification(img1_cropped).detach().cpu()
-            img2_embeddings = self.FaceVerification(img2_cropped).detach().cpu()
-
-            dists = [
-                (e1 - e2).norm().item()
-                for e1, e2 in zip(img1_embeddings, img2_embeddings)
-            ]
-
-            for dist in dists:
-                if dist < 0.91906:
-                    count += 1
-
-        return count / img1_cropped.shape[0], sum(dists) / len(dists)
-
-    def detect_face(self, imgs1, imgs2):
+    def detect_faces(self, imgs1, imgs2):
         IMG1 = []
         IMG2 = []
         for idx in range(min(imgs1.shape[0], imgs2.shape[0])):
@@ -87,45 +127,115 @@ class Effectiveness:
         IMG2 = torch.stack(IMG2, dim=0).cuda()
         return IMG1, IMG2
 
-    def _is_ndarray_valid(self, ndarray: np.ndarray) -> bool:
-        return ndarray is not None and isinstance(ndarray, np.ndarray)
+    def compare(self, imgs1, imgs2):
+        count = 0
+        img1_cropped, img2_cropped = self.detect_faces(imgs1, imgs2)
 
-    def _is_tensor_valid(self, tensor: torch.tensor) -> bool:
-        return tensor is not None and isinstance(tensor, torch.Tensor)
+        with torch.no_grad():
+            img1_embeddings = self.FaceVerification(img1_cropped).detach().cpu()
+            img2_embeddings = self.FaceVerification(img2_cropped).detach().cpu()
 
-    def get_image_difference(self, source: torch.tensor, swap: torch.tensor) -> float:
-        try:
-            source_ndarray = source.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
-            swap_ndarray = swap.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
+            dists = [
+                (e1 - e2).norm().item()
+                for e1, e2 in zip(img1_embeddings, img2_embeddings)
+            ]
 
-            source_cropped = self.mtcnn(source_ndarray[0])[None, :].cuda()
-            swap_cropped = self.mtcnn(swap_ndarray[0])[None, :].cuda()
+            for dist in dists:
+                if dist < self.threshold:
+                    count += 1
 
-            source_embeddings = self.FaceVerification(source_cropped).detach().cpu()
-            swap_embeddings = self.FaceVerification(swap_cropped).detach().cpu()
+        return count / img1_cropped.shape[0], sum(dists) / len(dists)
 
-            return (source_embeddings - swap_embeddings).norm().item()
-        except:
-            return float("inf")
+    def count_matching_imgs(self, imgs1, imgs2):
+        count = 0
+        img1_cropped, img2_cropped = self.detect_faces(imgs1, imgs2)
+        with torch.no_grad():
+            img1_embeddings = self.FaceVerification(img1_cropped).detach().cpu()
+            img2_embeddings = self.FaceVerification(img2_cropped).detach().cpu()
 
+            dists = [
+                (e1 - e2).norm().item()
+                for e1, e2 in zip(img1_embeddings, img2_embeddings)
+            ]
 
-class Evaluate:
-    def __init__(self, args, logger):
-        self.args = args
-        self.logger = logger
+            count += sum(1 for dist in dists if dist < self.threshold)
 
-        self.utility = Utility()
-        self.efficiency = Effectiveness(None)
+        return count / img1_cropped.shape[0]
 
-    def _load_images(self, dir: str):
-        imgs_dir = os.path.join(self.args.data_dir, dir)
-        imgs_path = [os.path.join(imgs_dir, img) for img in os.listdir(imgs_dir)]
+    def get_image_distance(self, img1: np.ndarray, img2: np.ndarray):
+        img1_cropped = self.mtcnn(img1)
+        img2_cropped = self.mtcnn(img2)
 
-        iter_all_images = (cv2.imread(fn) for fn in imgs_path)
-        for i, image in enumerate(iter_all_images):
-            if i == 0:
-                all_images = np.empty(
-                    (len(imgs_path),) + image.shape, dtype=image.dtype
-                )
-            all_images[i] = image
-        return all_images
+        if img1_cropped is None or img2_cropped is None:
+            return math.nan
+
+        img1_embeddings = self.FaceVerification(img1_cropped.unsqueeze(0).cuda())
+        img2_embeddings = self.FaceVerification(img2_cropped.unsqueeze(0).cuda())
+
+        with torch.no_grad():
+            distance = (img1_embeddings - img2_embeddings).norm().item()
+
+        return distance
+
+    def get_images_distance(
+        self, imgs1: torch.tensor, imgs2: torch.tensor
+    ) -> list[float]:
+        distances = []
+        if imgs1.shape != imgs2.shape:
+            return distances
+
+        imgs1_ndarray = imgs1.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
+        imgs2_ndarray = imgs2.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
+
+        for i in range(imgs1_ndarray.shape[0]):
+            try:
+                img1_cropped = self.mtcnn(imgs1_ndarray[i]).unsqueeze(0).cuda()
+                img2_cropped = self.mtcnn(imgs2_ndarray[i]).unsqueeze(0).cuda()
+
+                img1_embeddings = self.FaceVerification(img1_cropped).detach().cpu()
+                img2_embeddings = self.FaceVerification(img2_cropped).detach().cpu()
+
+                distances.append((img1_embeddings - img2_embeddings).norm().item())
+            except Exception as e:
+                distances.append(math.nan)
+
+        return distances
+
+    def calculate_effectiveness(
+        self,
+        source_imgs: tensor,
+        pert_imgs: tensor,
+        swap_imgs: tensor,
+        pert_swap_imgs: tensor,
+        anchor_imgs: tensor,
+    ):
+        effectivenesses = {"pert": 0, "swap": 0, "pert_swap": 0, "anchor": 0}
+
+        source_imgs_ndarray = (
+            source_imgs.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
+        )
+        pert_imgs_ndarray = (
+            pert_imgs.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
+        )
+        swap_imgs_ndarray = (
+            swap_imgs.detach().cpu().numpy().transpose(0, 2, 3, 1)
+        ) * 255.0
+        pert_swap_imgs_ndarray = (
+            pert_swap_imgs.detach().cpu().numpy().transpose(0, 2, 3, 1)
+        ) * 255.0
+        anchor_imgs_ndarray = (
+            anchor_imgs.detach().cpu().numpy().transpose(0, 2, 3, 1)
+        ) * 255.0
+
+        pert = self.count_matching_imgs(source_imgs_ndarray, pert_imgs_ndarray)
+        effectivenesses["pert"] = pert
+        swap = self.count_matching_imgs(source_imgs_ndarray, swap_imgs_ndarray)
+        effectivenesses["swap"] = swap
+        pert_swap = self.count_matching_imgs(
+            source_imgs_ndarray, pert_swap_imgs_ndarray
+        )
+        effectivenesses["pert_swap"] = pert_swap
+        anchor = self.count_matching_imgs(anchor_imgs_ndarray, pert_swap_imgs_ndarray)
+        effectivenesses["anchor"] = anchor
+
+        return effectivenesses
