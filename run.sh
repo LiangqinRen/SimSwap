@@ -28,6 +28,9 @@ then
 elif [[ $mode == 'worker' ]]
 then
     python main.py --method $mode --batch_size 30
+elif [[ $mode == 'robustness' ]]
+then
+    python main.py --method $mode --batch_size 14
 else
     echo "Unrecognized mode!"
 fi

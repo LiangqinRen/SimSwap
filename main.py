@@ -39,6 +39,10 @@ def main():
         from miscellaneous import main
 
         main(args, logger)
+    elif args.method == "robustness":
+        from robustness import main
+
+        main(args, logger)
     else:
         raise NotImplementedError
 
