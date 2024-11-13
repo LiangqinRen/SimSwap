@@ -460,6 +460,15 @@ class SimSwapDefense(Base, nn.Module):
                 target_effectivenesses,
             )
 
+            # result = self.effectiveness.get_face_effectiveness(
+            #     self.logger,
+            #     imgs1,
+            #     imgs1_src_swap,
+            #     best_anchor_imgs,
+            #     pert_imgs1_src_swap,
+            # )
+            # print(result)
+
             del imgs1, imgs2, x_imgs, best_anchor_imgs
             del imgs1_src_swap, pert_imgs1_src_swap, imgs1_tgt_swap, pert_imgs1_tgt_swap
             torch.cuda.empty_cache()

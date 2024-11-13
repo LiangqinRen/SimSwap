@@ -201,6 +201,78 @@ class Effectiveness:
 
         return distances
 
+    def __get_face_recognition(
+        self, logger, img1: tensor, img2: tensor
+    ) -> tuple[int, int]:
+        import requests
+        import base64
+        from PIL import Image
+        from io import BytesIO
+        import time
+
+        buffered1 = BytesIO()
+        img1 = img1 * 255
+        img_image = Image.fromarray(img1.cpu().permute(1, 2, 0).byte().numpy())
+        img_image.save(buffered1, format="PNG")
+        img1_base64 = base64.b64encode(buffered1.getvalue()).decode("utf-8")
+
+        buffered2 = BytesIO()
+        img2 = img2 * 255
+        img_image = Image.fromarray(img2.cpu().permute(1, 2, 0).byte().numpy())
+        img_image.save(buffered2, format="PNG")
+        img2_base64 = base64.b64encode(buffered2.getvalue()).decode("utf-8")
+
+        url = "https://api-us.faceplusplus.com/facepp/v3/compare"
+        payload = {
+            "api_key": "4grmq8PU5uq4TZMLDrQG-daNc_AMbQhf",
+            "api_secret": "qA4JNTxBIEn3NqXPLDBvRcrdhs1yLYaI",
+            "image_base64_1": img1_base64,
+            "image_base64_2": img2_base64,
+        }
+
+        fail_count = 0
+        while fail_count < 5:
+            response = requests.post(url, data=payload)
+            if response.status_code == 200:
+                response = response.json()
+                return (
+                    (1, 1)
+                    if response["confidence"] > response["thresholds"]["1e-5"]
+                    else (0, 1)
+                )
+            elif response.status_code == 403:
+                fail_count += 1
+                time.sleep(0.5)
+            else:
+                logger.error(response.status_code)
+                return (0, 0)
+
+    def get_face_effectiveness(
+        self,
+        logger,
+        source_imgs: tensor,
+        swap_imgs: tensor,
+        anchor_imgs: tensor,
+        pert_swap_imgs: tensor,
+    ) -> dict:
+        effectivenesses = {"swap": (0, 0), "pert_swap": (0, 0)}
+        for i in range(source_imgs.shape[0]):
+            source_swap_result = self.__get_face_recognition(
+                logger, source_imgs[i], pert_swap_imgs[i]
+            )
+            effectivenesses["swap"] = tuple(
+                a + b for a, b in zip(effectivenesses["swap"], source_swap_result)
+            )
+
+            anchor_swap_result = self.__get_face_recognition(
+                logger, anchor_imgs[i], pert_swap_imgs[i]
+            )
+            effectivenesses["pert_swap"] = tuple(
+                a + b for a, b in zip(effectivenesses["pert_swap"], anchor_swap_result)
+            )
+
+        return effectivenesses
+
     def calculate_effectiveness(
         self,
         source_imgs: tensor,
@@ -208,7 +280,7 @@ class Effectiveness:
         swap_imgs: tensor,
         pert_swap_imgs: tensor,
         anchor_imgs: tensor,
-    ):
+    ) -> dict:
         effectivenesses = {"pert": 0, "swap": 0, "pert_swap": 0, "anchor": 0}
 
         source_imgs_ndarray = (
