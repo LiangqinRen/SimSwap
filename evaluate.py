@@ -65,7 +65,7 @@ class Utility:
             utilities["mse"].append(mse)
 
             psnr = metrics.peak_signal_noise_ratio(
-                imgs1_ndarray[i], imgs2_ndarray[i], data_range=255
+                imgs1_ndarray[i], imgs2_ndarray[i], data_range=1
             )
             utilities["psnr"].append(psnr)
 
@@ -73,7 +73,6 @@ class Utility:
                 imgs1_ndarray[i],
                 imgs2_ndarray[i],
                 channel_axis=2,
-                multichannel=True,
                 data_range=1,
             )
             utilities["ssim"].append(ssim)
@@ -224,8 +223,8 @@ class Effectiveness:
 
         url = "https://api-us.faceplusplus.com/facepp/v3/compare"
         payload = {
-            "api_key": "4grmq8PU5uq4TZMLDrQG-daNc_AMbQhf",
-            "api_secret": "qA4JNTxBIEn3NqXPLDBvRcrdhs1yLYaI",
+            "api_key": "",
+            "api_secret": "",
             "image_base64_1": img1_base64,
             "image_base64_2": img2_base64,
         }

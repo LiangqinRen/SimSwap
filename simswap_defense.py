@@ -108,14 +108,14 @@ class SimSwapDefense(Base, nn.Module):
                 )
                 if distance is math.nan:
                     continue
-                distances.append(distance)
+                distances.append((distance, j))
 
-            best_anchor_idx = 0
-            for i, distance in enumerate(distances):
-                if abs(distances[i] - self.args.effectiveness_threshold) < abs(
-                    distances[best_anchor_idx] - self.args.effectiveness_threshold
-                ):
-                    best_anchor_idx = i
+            sorted_distances = sorted(distances)
+            best_anchor_idx = sorted_distances[-1][1]
+            for distance in sorted_distances:
+                if distance[0] >= self.args.effectiveness_threshold:
+                    best_anchor_idx = distance[1]
+                    break
 
             best_anchors.append(anchor_imgs[best_anchor_idx])
 
@@ -227,7 +227,7 @@ class SimSwapDefense(Base, nn.Module):
         imgs1_tgt_swap: tensor,
         pert_imgs1_tgt_swap: tensor,
     ) -> tuple[dict, dict, dict, dict, dict]:
-        pert_utilities = self.utility.calculate_utility(x_imgs, imgs1)
+        pert_utilities = self.utility.calculate_utility(imgs1, x_imgs)
         pert_as_src_swap_utilities = self.utility.calculate_utility(
             imgs1_src_swap, pert_imgs1_src_swap
         )
