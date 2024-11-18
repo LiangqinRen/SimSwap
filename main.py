@@ -20,17 +20,17 @@ def main():
         "pgd_both_metric": defense.pgd_both_metric,
         "pgd_both_robustness_sample": defense.pgd_both_robustness_sample,
         "pgd_both_robustness_metric": defense.pgd_both_robustness_metric,
-        #
-        "pgd_source_distance": defense.pgd_source_distance,
-        "pgd_target_robustness_metric": defense.pgd_target_robustness_metric,
-        "gan_source_sample": defense.gan_source_sample,
-        "gan_target_sample": defense.gan_target_sample,
-        "gan_source_metric": defense.gan_source_metric,
-        "gan_target_metric": defense.gan_target_metric,
-        "gan_source_robustness_sample": defense.gan_source_robustness_sample,
-        "gan_target_robustness_sample": defense.gan_target_robustness_sample,
-        "gan_source_robustness_metric": defense.gan_source_robustness_metric,
-        "gan_target_robustness_metric": defense.gan_target_robustness_metric,
+        "gan_both_train": defense.gan_both_train,
+        "gan_both_sample": defense.gan_both_sample,
+        "gan_both_metric": defense.gan_both_metric,
+        # "pgd_source_distance": defense.pgd_source_distance,
+        # "pgd_target_robustness_metric": defense.pgd_target_robustness_metric,
+        # "gan_source_metric": defense.gan_source_metric,
+        # "gan_target_metric": defense.gan_target_metric,
+        # "gan_source_robustness_sample": defense.gan_source_robustness_sample,
+        # "gan_target_robustness_sample": defense.gan_target_robustness_sample,
+        # "gan_source_robustness_metric": defense.gan_source_robustness_metric,
+        # "gan_target_robustness_metric": defense.gan_target_robustness_metric,
     }
 
     if args.method in defense_functions:

@@ -294,9 +294,10 @@ class Effectiveness:
         pert_swap_imgs_ndarray = (
             pert_swap_imgs.detach().cpu().numpy().transpose(0, 2, 3, 1)
         ) * 255.0
-        anchor_imgs_ndarray = (
-            anchor_imgs.detach().cpu().numpy().transpose(0, 2, 3, 1)
-        ) * 255.0
+        if anchor_imgs is not None:
+            anchor_imgs_ndarray = (
+                anchor_imgs.detach().cpu().numpy().transpose(0, 2, 3, 1)
+            ) * 255.0
 
         pert = self.count_matching_imgs(source_imgs_ndarray, pert_imgs_ndarray)
         effectivenesses["pert"] = pert
@@ -306,7 +307,10 @@ class Effectiveness:
             source_imgs_ndarray, pert_swap_imgs_ndarray
         )
         effectivenesses["pert_swap"] = pert_swap
-        anchor = self.count_matching_imgs(anchor_imgs_ndarray, pert_swap_imgs_ndarray)
-        effectivenesses["anchor"] = anchor
+        if anchor_imgs is not None:
+            anchor = self.count_matching_imgs(
+                anchor_imgs_ndarray, pert_swap_imgs_ndarray
+            )
+            effectivenesses["anchor"] = anchor
 
         return effectivenesses
