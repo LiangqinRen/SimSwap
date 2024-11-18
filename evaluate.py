@@ -178,7 +178,7 @@ class Effectiveness:
 
     def get_images_distance(
         self, imgs1: torch.tensor, imgs2: torch.tensor
-    ) -> list[float]:
+    ):  # -> list[float]
         distances = []
         if imgs1.shape != imgs2.shape:
             return distances
@@ -202,7 +202,7 @@ class Effectiveness:
 
     def __get_face_recognition(
         self, logger, img1: tensor, img2: tensor
-    ) -> tuple[int, int]:
+    ):  # -> tuple[int, int]
         import requests
         import base64
         from PIL import Image

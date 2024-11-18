@@ -111,6 +111,7 @@ class SimSwapDefense(Base, nn.Module):
                 distances.append((distance, j))
 
             sorted_distances = sorted(distances)
+            print(sorted_distances)
             best_anchor_idx = sorted_distances[-1][1]
             for distance in sorted_distances:
                 if distance[0] >= self.args.effectiveness_threshold:
