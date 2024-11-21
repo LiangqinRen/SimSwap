@@ -72,7 +72,7 @@ def get_argparser():
     parser.add_argument("--log_level", type=int, default=2)
     parser.add_argument("--log_interval", type=int, default=100)
     parser.add_argument("--method", type=str)
-    parser.add_argument("--data_dir", type=str, default="crop_224")
+    parser.add_argument("--data_dir", type=str, default="dataset")
     parser.add_argument("--random_seed", type=int, default=0)
 
     parser.add_argument("--metric_people_image", type=int, default=5)
@@ -80,7 +80,7 @@ def get_argparser():
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--testset_percentage", type=int, default=10)
     parser.add_argument(
-        "--effectiveness_threshold", type=float, default=1.0492130517959595
+        "--effectiveness_threshold", type=float, default=0.9671370387077332
     )
 
     parser.add_argument("--pgd_epsilon", type=float, default=1e-2)

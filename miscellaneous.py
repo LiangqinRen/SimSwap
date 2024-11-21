@@ -38,118 +38,94 @@ class Worker(common_base.Base):
         self, all_people: list[str], version: int
     ) -> tuple[list[str], list[str]]:
         train_set_path = join(self.args.data_dir, "train")
+        imgs1_path, imgs2_path = [], []
         if version == 1:
-            imgs_path = []
-            for people in all_people:
-                people_path = join(train_set_path, people)
-                all_image = sorted(os.listdir(people_path))
-                selected_imgs_name = random.sample(
-                    all_image, min(self.args.metric_people_image, len(all_image))
-                )
-                imgs_path.extend(
-                    [join(people_path, name) for name in selected_imgs_name]
-                )
-            return imgs_path, imgs_path
-        elif version == 2:
-            source_imgs_path, target_imgs_path = [], []
+            # distance between same people's image
             for i, people in enumerate(all_people):
-                people_path = join(train_set_path, people)
-                all_image = sorted(os.listdir(people_path))
-                selected_imgs_name = random.sample(
-                    all_image, min(self.args.metric_people_image, len(all_image))
-                )
-
-                if i % 2 == 0:
-                    source_imgs_path.extend(
-                        [join(people_path, name) for name in selected_imgs_name]
-                    )
-                else:
-                    target_imgs_path.extend(
-                        [join(people_path, name) for name in selected_imgs_name]
-                    )
-            return source_imgs_path, target_imgs_path
-        elif version == 3:
-            source_imgs_path, target_imgs_path = [], []
-            for people in all_people:
                 people_path = join(train_set_path, people)
                 all_image = sorted(os.listdir(people_path))
                 selected_imgs_name = random.sample(
                     all_image, min(self.args.metric_people_image * 2, len(all_image))
                 )
+
                 if len(selected_imgs_name) % 2 == 1:
                     selected_imgs_name.pop()
 
-                for i, image in enumerate(selected_imgs_name):
-                    if i % 2 == 0:
-                        source_imgs_path.append(join(people_path, image))
+                for j, name in enumerate(selected_imgs_name):
+                    if j % 2 == 0:
+                        imgs1_path.append(join(people_path, name))
                     else:
-                        target_imgs_path.append(join(people_path, image))
-            return source_imgs_path, target_imgs_path
+                        imgs2_path.append(join(people_path, name))
+            assert len(imgs1_path) == len(imgs2_path)
+        elif version == 2:
+            # distance between different people's image
+            for i, people in enumerate(all_people):
+                people_path = join(train_set_path, people)
+                all_image = sorted(os.listdir(people_path))
+                selected_imgs_name = random.sample(
+                    all_image, min(self.args.metric_people_image * 2, len(all_image))
+                )
 
-    def calculate_effectiveness_threshold(self, version: int) -> None:
+                if i % 2 == 0:
+                    imgs1_path.extend(
+                        [join(people_path, name) for name in selected_imgs_name]
+                    )
+                else:
+                    imgs2_path.extend(
+                        [join(people_path, name) for name in selected_imgs_name]
+                    )
+
+        return imgs1_path, imgs2_path
+
+    def calculate_effectiveness_distance(self, version: int) -> None:
         self.logger.info(
             f"{inspect.currentframe().f_code.co_name} version {version}",
         )
         train_set_path = join(self.args.data_dir, "train")
         all_people = sorted(os.listdir(train_set_path))
 
-        source_imgs_path, target_imgs_path = self.__get_paired_images_path(
-            all_people, version
-        )
-
+        imgs1_path, imgs2_path = self.__get_paired_images_path(all_people, version)
         path_distances = []
         distance_sum = 0
-        total_batch = (
-            min(len(source_imgs_path), len(target_imgs_path)) // self.args.batch_size
-        )
+        total_batch = min(len(imgs1_path), len(imgs2_path)) // self.args.batch_size
         for i in tqdm(range(total_batch)):
-            iter_source_path = source_imgs_path[
+            iter_imgs1_path = imgs1_path[
                 i * self.args.batch_size : (i + 1) * self.args.batch_size
             ]
-            iter_target_path = target_imgs_path[
+            iter_imgs2_path = imgs2_path[
                 i * self.args.batch_size : (i + 1) * self.args.batch_size
             ]
 
-            source_imgs = super()._load_imgs(iter_source_path)
-            target_imgs = super()._load_imgs(iter_target_path)
+            imgs1 = super()._load_imgs(iter_imgs1_path)
+            imgs2 = super()._load_imgs(iter_imgs2_path)
 
-            if version in [1, 2]:
-                source_identity = super()._get_imgs_identity(source_imgs)
-                swap_imgs = self.target(None, target_imgs, source_identity, None, True)
-                distances = self.effectiveness.get_images_distance(
-                    source_imgs, swap_imgs
-                )
-            else:
-                distances = self.effectiveness.get_images_distance(
-                    source_imgs, target_imgs
-                )
+            distances = self.effectiveness.get_images_distance(imgs1, imgs2)
             for i in range(len(distances)):
                 if distances[i] is math.nan:
                     continue
                 tqdm.write(
-                    f"{iter_source_path[i]}, {iter_target_path[i]} distance: {distances[i]:.5f}"
+                    f"{iter_imgs1_path[i]}, {iter_imgs2_path[i]} distance: {distances[i]:.5f}"
                 )
                 distance_sum += distances[i]
                 path_distances.append(
-                    (iter_source_path[i], iter_target_path[i], distances[i])
+                    (iter_imgs1_path[i], iter_imgs2_path[i], distances[i])
                 )
 
-        sorted_distances = sorted(path_distances, key=lambda x: x[2])
+        sorted_path_distances = sorted(path_distances, key=lambda x: x[2])
 
         with open(join(self.args.log_dir, f"v{version}_distance.txt"), "w") as f:
-            for line in sorted_distances:
+            for line in sorted_path_distances:
                 f.write(f"{line}\n")
 
         self.logger.info(
-            f"With {len(sorted_distances)} pictures, the max, mean, min distances are {sorted_distances[-1][2]:.5f}, {distance_sum/len(sorted_distances):.5f} and {sorted_distances[0][2]:.5f}"
+            f"With {len(sorted_path_distances)} pictures, the max, mean, min distances are {sorted_path_distances[-1][2]:.5f}, {distance_sum/len(sorted_path_distances):.5f} and {sorted_path_distances[0][2]:.5f}"
         )
 
 
 def main(args, logger):
     worker = Worker(args, logger)
-    worker.calculate_effectiveness_threshold(version=1)
-    worker.calculate_effectiveness_threshold(version=2)
-    worker.calculate_effectiveness_threshold(version=3)
+    # worker.calculate_effectiveness_distance(version=1)
+    worker.calculate_effectiveness_distance(version=2)
 
 
 if __name__ == "__main__":

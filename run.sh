@@ -18,7 +18,7 @@ then
     python main.py --method $mode --gan_test_models "gan_both.pth" --batch_size 7
 elif [[ $mode == 'worker' ]]
 then
-    python main.py --method $mode --batch_size 30
+    python main.py --method $mode --batch_size 64
 elif [[ $mode == 'robustness' ]]
 then
     python main.py --method $mode --batch_size 14

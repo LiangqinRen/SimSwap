@@ -1,5 +1,6 @@
 output/
 crop_224/
+dataset/
 log/
 
 # Byte-compiled / optimized / DLL files
