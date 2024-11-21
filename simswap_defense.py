@@ -1068,25 +1068,13 @@ class SimSwapDefense(Base, nn.Module):
         for epoch in range(self.args.epochs):
             self.GAN_G.cuda().train()
             imgs1_path = random.sample(train_imgs_path, self.args.batch_size)
-            imgs2_path = random.sample(train_imgs_path, self.args.batch_size)
 
             imgs1 = self._load_imgs(imgs1_path)
             imgs1_identity = self._get_imgs_identity(imgs1)
-            imgs2 = self._load_imgs(imgs2_path)
-            imgs2_identity = self._get_imgs_identity(imgs2)
             imgs1_latent_code = self.target.netG.encoder(imgs1)
-
-            imgs1_src_swap = self.target(None, imgs2, imgs1_identity, None, True)
-            imgs1_tgt_swap = self.target(None, imgs1, imgs2_identity, None, True)
 
             pert_imgs1 = self.GAN_G(imgs1)
             pert_imgs1_identity = self._get_imgs_identity(pert_imgs1)
-            pert_imgs1_src_swap = self.target(
-                None, imgs2, pert_imgs1_identity, None, True
-            )
-            pert_imgs1_tgt_swap = self.target(
-                None, pert_imgs1, imgs2_identity, None, True
-            )
             pert_imgs1_latent_code = self.target.netG.encoder(pert_imgs1)
 
             self.GAN_G.zero_grad()
@@ -1095,38 +1083,28 @@ class SimSwapDefense(Base, nn.Module):
             identity_diff_loss = -torch.clamp(
                 l2_loss(flatten(pert_imgs1_identity), flatten(imgs1_identity)),
                 0.0,
-                self.loss_limits["identity"],
+                self.gan_loss_limits["identity"],
             )
             latent_diff_loss = -torch.clamp(
                 l2_loss(flatten(pert_imgs1_latent_code), flatten(imgs1_latent_code)),
                 0.0,
-                self.loss_limits["latent"],
-            )
-            swap_diff_loss = -torch.clamp(
-                l2_loss(flatten(pert_imgs1_src_swap), flatten(imgs1_src_swap)),
-                0.0,
-                self.loss_limits["result"],
-            ) - torch.clamp(
-                l2_loss(flatten(pert_imgs1_tgt_swap), flatten(imgs1_tgt_swap)),
-                0.0,
-                self.loss_limits["result"],
+                self.gan_loss_limits["latent"],
             )
 
             G_loss = (
-                self.loss_weights["pert"] * pert_diff_loss
-                + self.loss_weights["identity"] * identity_diff_loss
-                + self.loss_weights["latent"] * latent_diff_loss
-                + self.loss_weights["result"] * swap_diff_loss
+                self.gan_loss_weights["pert"] * pert_diff_loss
+                + self.gan_loss_weights["identity"] * identity_diff_loss
+                + self.gan_loss_weights["latent"] * latent_diff_loss
             )
             G_loss.backward(retain_graph=True)
             optimizer_G.step()
             scheduler.step()
 
             self.logger.info(
-                f"[Epoch {epoch:6}]loss(pert, identity, latent, result): {G_loss:8.5f}({self.loss_weights['pert'] * pert_diff_loss.item():.5f}, {self.loss_weights['identity'] * identity_diff_loss.item():.5f}, {self.loss_weights['latent'] * latent_diff_loss.item():.5f}, {self.loss_weights['result'] * swap_diff_loss.item():.5f})({pert_diff_loss.item():.5f}, {identity_diff_loss.item():.5f}, {latent_diff_loss.item():.5f}, {swap_diff_loss.item():.5f})"
+                f"[Epoch {epoch+1:6}]loss(pert, identity, latent, result): {G_loss:8.5f}({self.gan_loss_weights['pert'] * pert_diff_loss.item():.5f}, {self.gan_loss_weights['identity'] * identity_diff_loss.item():.5f}, {self.gan_loss_weights['latent'] * latent_diff_loss.item():.5f})({pert_diff_loss.item():.5f}, {identity_diff_loss.item():.5f}, {latent_diff_loss.item():.5f})"
             )
 
-            if epoch % self.args.log_interval == 0:
+            if (epoch + 1) % self.args.log_interval == 0:
                 with torch.no_grad():
                     self.GAN_G.eval()
                     self.target.eval()
@@ -1183,7 +1161,7 @@ class SimSwapDefense(Base, nn.Module):
                     )
 
                     save_path = join(
-                        self.args.log_dir, "image", f"gan_both_{epoch}.png"
+                        self.args.log_dir, "image", f"gan_both_{epoch+1}.png"
                     )
                     save_image(results, save_path, nrow=10)
 
