@@ -82,12 +82,7 @@ class SimSwapDefense(Base, nn.Module):
                 distances.append((distance, j))
 
             sorted_distances = sorted(distances)
-            best_anchor_idx = sorted_distances[-1][1]
-            for distance in sorted_distances:
-                if distance[0] >= self.args.effectiveness_threshold:
-                    best_anchor_idx = distance[1]
-                    break
-
+            best_anchor_idx = sorted_distances[0][1]
             best_anchors.append(anchor_imgs[best_anchor_idx])
 
         return torch.stack(best_anchors, dim=0)
@@ -204,19 +199,17 @@ class SimSwapDefense(Base, nn.Module):
         pert_as_tgt_swap_utilities = self.utility.calculate_utility(
             imgs1_tgt_swap, pert_imgs1_tgt_swap
         )
-        source_effectivenesses = self.effectiveness.calculate_effectiveness(
+        source_effectivenesses = self.effectiveness.calculate_as_source_effectiveness(
             imgs1,
             x_imgs,
             imgs1_src_swap,
             pert_imgs1_src_swap,
             best_anchor_imgs,
         )
-        target_effectivenesses = self.effectiveness.calculate_effectiveness(
+        target_effectivenesses = self.effectiveness.calculate_as_target_effectiveness(
             imgs2,
-            x_imgs,
             imgs1_tgt_swap,
             pert_imgs1_tgt_swap,
-            best_anchor_imgs,
         )
 
         return (

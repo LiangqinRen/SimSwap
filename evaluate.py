@@ -4,11 +4,17 @@ import torch
 import lpips
 import numpy as np
 import math
+import requests
+import base64
+import time
 
 from facenet_pytorch import MTCNN, InceptionResnetV1
 from skimage import metrics
 from torchvision.models import vgg16, VGG16_Weights
 from torch import tensor
+import face_recognition
+from PIL import Image
+from io import BytesIO
 
 
 class Utility:
@@ -146,20 +152,33 @@ class Effectiveness:
         return count / img1_cropped.shape[0], sum(dists) / len(dists)
 
     def count_matching_imgs(self, imgs1, imgs2):
-        count = 0
-        img1_cropped, img2_cropped = self.detect_faces(imgs1, imgs2)
-        with torch.no_grad():
-            img1_embeddings = self.FaceVerification(img1_cropped).detach().cpu()
-            img2_embeddings = self.FaceVerification(img2_cropped).detach().cpu()
+        matching_count, valid_count = 0, 0
+        for i in range(imgs1.shape[0]):
+            try:
+                img1, img2 = imgs1[i], imgs2[i]
+                img1 = np.array(
+                    Image.fromarray(
+                        (img1.cpu().permute(1, 2, 0).numpy() * 255).astype(np.uint8)
+                    )
+                )
+                img2 = np.array(
+                    Image.fromarray(
+                        (img2.cpu().permute(1, 2, 0).numpy() * 255).astype(np.uint8)
+                    )
+                )
+                img1_encoding = face_recognition.face_encodings(img1)[0]
+                img2_encoding = face_recognition.face_encodings(img2)[0]
+                face_distances = face_recognition.face_distance(
+                    [img1_encoding], img2_encoding
+                )
+                i, face_distance = next(enumerate(face_distances))
+                if face_distance <= 0.6:
+                    matching_count += 1
+                valid_count += 1
+            except Exception as e:
+                continue
 
-            dists = [
-                (e1 - e2).norm().item()
-                for e1, e2 in zip(img1_embeddings, img2_embeddings)
-            ]
-
-            count += sum(1 for dist in dists if dist < self.threshold)
-
-        return count / img1_cropped.shape[0]
+        return matching_count / valid_count if valid_count > 0 else 0
 
     def get_image_distance(self, img1: np.ndarray, img2: np.ndarray):
         img1_cropped = self.mtcnn(img1)
@@ -203,11 +222,6 @@ class Effectiveness:
     def __get_face_recognition(
         self, logger, img1: tensor, img2: tensor
     ) -> tuple[int, int]:
-        import requests
-        import base64
-        from PIL import Image
-        from io import BytesIO
-        import time
 
         buffered1 = BytesIO()
         img1 = img1 * 255
@@ -287,6 +301,44 @@ class Effectiveness:
 
         return effectivenesses
 
+    def calculate_as_source_effectiveness(
+        self,
+        source_imgs: tensor,
+        pert_imgs: tensor,
+        swap_imgs: tensor,
+        pert_swap_imgs: tensor,
+        anchor_imgs: tensor,
+    ) -> dict:
+        effectivenesses = {}
+
+        effectivenesses["pert"] = self.count_matching_imgs(source_imgs, pert_imgs)
+        effectivenesses["swap"] = self.count_matching_imgs(source_imgs, swap_imgs)
+        effectivenesses["pert_swap"] = self.count_matching_imgs(
+            source_imgs, pert_swap_imgs
+        )
+
+        if anchor_imgs is not None:
+            effectivenesses["anchor"] = self.count_matching_imgs(
+                anchor_imgs, pert_swap_imgs
+            )
+
+        return effectivenesses
+
+    def calculate_as_target_effectiveness(
+        self,
+        source_imgs: tensor,
+        swap_imgs: tensor,
+        pert_swap_imgs: tensor,
+    ) -> dict:
+        effectivenesses = {}
+
+        effectivenesses["swap"] = self.count_matching_imgs(source_imgs, swap_imgs)
+        effectivenesses["pert_swap"] = self.count_matching_imgs(
+            source_imgs, pert_swap_imgs
+        )
+
+        return effectivenesses
+
     def calculate_effectiveness(
         self,
         source_imgs: tensor,
@@ -295,37 +347,38 @@ class Effectiveness:
         pert_swap_imgs: tensor,
         anchor_imgs: tensor,
     ) -> dict:
-        effectivenesses = {"pert": 0, "swap": 0, "pert_swap": 0, "anchor": 0}
+        effectivenesses = {}
 
         source_imgs_ndarray = (
             source_imgs.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
-        )
+        ).astype(np.uint8)
         pert_imgs_ndarray = (
             pert_imgs.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
-        )
+        ).astype(np.uint8)
         swap_imgs_ndarray = (
-            swap_imgs.detach().cpu().numpy().transpose(0, 2, 3, 1)
-        ) * 255.0
+            swap_imgs.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
+        ).astype(np.uint8)
         pert_swap_imgs_ndarray = (
-            pert_swap_imgs.detach().cpu().numpy().transpose(0, 2, 3, 1)
-        ) * 255.0
-        if anchor_imgs is not None:
-            anchor_imgs_ndarray = (
-                anchor_imgs.detach().cpu().numpy().transpose(0, 2, 3, 1)
-            ) * 255.0
+            pert_swap_imgs.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
+        ).astype(np.uint8)
 
-        pert = self.count_matching_imgs(source_imgs_ndarray, pert_imgs_ndarray)
-        effectivenesses["pert"] = pert
-        swap = self.count_matching_imgs(source_imgs_ndarray, swap_imgs_ndarray)
-        effectivenesses["swap"] = swap
-        pert_swap = self.count_matching_imgs(
+        effectivenesses["pert"] = self.count_matching_imgs(
+            source_imgs_ndarray, pert_imgs_ndarray
+        )
+        effectivenesses["swap"] = self.count_matching_imgs(
+            source_imgs_ndarray, swap_imgs_ndarray
+        )
+        effectivenesses["pert_swap"] = self.count_matching_imgs(
             source_imgs_ndarray, pert_swap_imgs_ndarray
         )
-        effectivenesses["pert_swap"] = pert_swap
+
         if anchor_imgs is not None:
-            anchor = self.count_matching_imgs(
+            anchor_imgs_ndarray = (
+                anchor_imgs.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
+            ).astype(np.uint8)
+
+            effectivenesses["anchor"] = self.count_matching_imgs(
                 anchor_imgs_ndarray, pert_swap_imgs_ndarray
             )
-            effectivenesses["anchor"] = anchor
 
         return effectivenesses
