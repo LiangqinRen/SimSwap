@@ -151,19 +151,23 @@ class Effectiveness:
 
         return count / img1_cropped.shape[0], sum(dists) / len(dists)
 
-    def count_matching_imgs(self, imgs1, imgs2):
+    def count_matching_imgs(self, logger, imgs1, imgs2):
         matching_count, valid_count = 0, 0
         for i in range(imgs1.shape[0]):
             try:
                 img1, img2 = imgs1[i], imgs2[i]
                 img1 = np.array(
                     Image.fromarray(
-                        (img1.cpu().permute(1, 2, 0).numpy() * 255).astype(np.uint8)
+                        (img1.detach().cpu().permute(1, 2, 0).numpy() * 255).astype(
+                            np.uint8
+                        )
                     )
                 )
                 img2 = np.array(
                     Image.fromarray(
-                        (img2.cpu().permute(1, 2, 0).numpy() * 255).astype(np.uint8)
+                        (img2.detach().cpu().permute(1, 2, 0).numpy() * 255).astype(
+                            np.uint8
+                        )
                     )
                 )
                 img1_encoding = face_recognition.face_encodings(img1)[0]
@@ -176,9 +180,9 @@ class Effectiveness:
                     matching_count += 1
                 valid_count += 1
             except Exception as e:
-                continue
+                logger.warning(e)
 
-        return matching_count / valid_count if valid_count > 0 else 0
+        return (matching_count, valid_count)
 
     def get_image_distance(self, img1: np.ndarray, img2: np.ndarray):
         img1_cropped = self.mtcnn(img1)
@@ -303,39 +307,94 @@ class Effectiveness:
 
     def calculate_as_source_effectiveness(
         self,
+        logger,
         source_imgs: tensor,
         pert_imgs: tensor,
         swap_imgs: tensor,
         pert_swap_imgs: tensor,
         anchor_imgs: tensor,
     ) -> dict:
-        effectivenesses = {}
+        effectivenesses = {
+            "face_recognition": {},
+            "face++": {
+                "pert": (0, 0),
+                "swap": (0, 0),
+                "pert_swap": (0, 0),
+                "anchor": (0, 0),
+            },
+        }
 
-        effectivenesses["pert"] = self.count_matching_imgs(source_imgs, pert_imgs)
-        effectivenesses["swap"] = self.count_matching_imgs(source_imgs, swap_imgs)
-        effectivenesses["pert_swap"] = self.count_matching_imgs(
-            source_imgs, pert_swap_imgs
+        effectivenesses["face_recognition"]["pert"] = self.count_matching_imgs(
+            logger, source_imgs, pert_imgs
+        )
+        effectivenesses["face_recognition"]["swap"] = self.count_matching_imgs(
+            logger, source_imgs, swap_imgs
+        )
+        effectivenesses["face_recognition"]["pert_swap"] = self.count_matching_imgs(
+            logger, source_imgs, pert_swap_imgs
+        )
+        effectivenesses["face_recognition"]["anchor"] = self.count_matching_imgs(
+            logger, anchor_imgs, pert_swap_imgs
         )
 
-        if anchor_imgs is not None:
-            effectivenesses["anchor"] = self.count_matching_imgs(
-                anchor_imgs, pert_swap_imgs
+        for i in range(source_imgs.shape[0]):
+            pert = self.__get_face_recognition(logger, source_imgs[i], pert_imgs[i])
+            effectivenesses["face++"]["pert"] = tuple(
+                a + b for a, b in zip(effectivenesses["face++"]["pert"], pert)
+            )
+
+            swap = self.__get_face_recognition(logger, source_imgs[i], swap_imgs[i])
+            effectivenesses["face++"]["swap"] = tuple(
+                a + b for a, b in zip(effectivenesses["face++"]["swap"], swap)
+            )
+
+            pert_swap = self.__get_face_recognition(
+                logger, source_imgs[i], pert_swap_imgs[i]
+            )
+            effectivenesses["face++"]["pert_swap"] = tuple(
+                a + b for a, b in zip(effectivenesses["face++"]["pert_swap"], pert_swap)
+            )
+
+            anchor = self.__get_face_recognition(
+                logger, anchor_imgs[i], pert_swap_imgs[i]
+            )
+            effectivenesses["face++"]["anchor"] = tuple(
+                a + b for a, b in zip(effectivenesses["face++"]["anchor"], anchor)
             )
 
         return effectivenesses
 
     def calculate_as_target_effectiveness(
         self,
+        logger,
         source_imgs: tensor,
         swap_imgs: tensor,
         pert_swap_imgs: tensor,
     ) -> dict:
-        effectivenesses = {}
+        effectivenesses = {
+            "face_recognition": {},
+            "face++": {"swap": (0, 0), "pert_swap": (0, 0)},
+        }
 
-        effectivenesses["swap"] = self.count_matching_imgs(source_imgs, swap_imgs)
-        effectivenesses["pert_swap"] = self.count_matching_imgs(
-            source_imgs, pert_swap_imgs
+        effectivenesses["face_recognition"]["swap"] = self.count_matching_imgs(
+            logger, source_imgs, swap_imgs
         )
+        effectivenesses["face_recognition"]["pert_swap"] = self.count_matching_imgs(
+            logger, source_imgs, pert_swap_imgs
+        )
+
+        for i in range(source_imgs.shape[0]):
+            swap = self.__get_face_recognition(logger, source_imgs[i], swap_imgs[i])
+            effectivenesses["face++"]["swap"] = tuple(
+                a + b for a, b in zip(effectivenesses["face++"]["swap"], swap)
+            )
+
+            pert_swap = self.__get_face_recognition(
+                logger, source_imgs[i], pert_swap_imgs[i]
+            )
+            effectivenesses["face++"]["pert_swap"] = tuple(
+                a + b for a, b in zip(effectivenesses["face++"]["pert_swap"], pert_swap)
+            )
 
         return effectivenesses
 
