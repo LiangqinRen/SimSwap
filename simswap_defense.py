@@ -16,7 +16,6 @@ import torchvision.transforms as transforms
 from os.path import join
 from torchvision.utils import save_image
 from models.fs_networks import Generator
-from tqdm import tqdm
 from torch import tensor
 
 
@@ -1652,3 +1651,56 @@ class SimSwapDefense(Base, nn.Module):
             {"rotate":<12} | {tuple(f'{x/(i + 1):.5f}' for x in utilities['rotate'])}, {tuple(f'{x/(i + 1):.5f}' for x in utilities['reverse_rotate'])} | {effectivenesses['rotate']/(i + 1):.5f}, {effectivenesses['reverse_rotate']/(i + 1):.5f}
             """
             )
+
+    def __calculate_anchor_distance(
+        self, imgs: tensor, anchor_imgs: tensor
+    ) -> tuple[float, float]:
+        imgs_ndarray = imgs.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
+        anchor_img_ndarray = (
+            anchor_imgs.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
+        )
+
+        for i in range(imgs.shape[0]):
+            distances = []
+            for j in range(anchor_imgs.shape[0]):
+                distance = self.effectiveness.get_image_distance(
+                    imgs_ndarray[i], anchor_img_ndarray[j]
+                )
+                if distance is math.nan:
+                    continue
+                distances.append((distance, j))
+
+            sorted_distances = sorted(distances)
+
+        if len(sorted_distances) == 0:
+            return None
+        else:
+            return (
+                sorted_distances[0][0],
+                sorted_distances[int(len(sorted_distances) / 2)][0],
+            )
+
+    def calculate_distance(self):
+        anchor_imgs_path = self.__get_anchor_imgs_path()
+        anchor_imgs = self._load_imgs(anchor_imgs_path)
+        min_distance, avg_distance = 0, 0
+
+        imgs1_path, imgs2_imgs_path = self._get_split_test_imgs_path()
+        total_batch = min(len(imgs1_path), len(imgs2_imgs_path)) // self.args.batch_size
+
+        import tqdm
+
+        for i in tqdm.tqdm(range(total_batch)):
+            iter_imgs1_path = imgs1_path[
+                i * self.args.batch_size : (i + 1) * self.args.batch_size
+            ]
+            imgs1 = self._load_imgs(iter_imgs1_path)
+            distance = self.__calculate_anchor_distance(imgs1, anchor_imgs)
+            if distance is not None:
+                min_distance += distance[0]
+                avg_distance += distance[1]
+                tqdm.tqdm.write(f"min/avg distance {distance[0]}, {distance[1]}")
+
+        self.logger.info(
+            f"min and avg distance: {min_distance/total_batch:.5f}, {avg_distance/total_batch:.5f}"
+        )

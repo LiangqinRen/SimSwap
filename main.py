@@ -25,6 +25,7 @@ def main():
         "gan_both_metric": defense.gan_both_metric,
         "gan_both_robustness_sample": defense.gan_both_robustness_sample,
         "gan_both_robustness_metric": defense.gan_both_robustness_metric,
+        "distance": defense.calculate_distance,
     }
 
     if args.method in defense_functions:

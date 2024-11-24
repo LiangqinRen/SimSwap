@@ -19,6 +19,9 @@ then
 elif [[ $mode == 'worker' ]]
 then
     python main.py --method $mode --batch_size 64
+elif [[ $mode == 'distance' ]]
+then
+    python main.py --method $mode --batch_size 64
 elif [[ $mode == 'robustness' ]]
 then
     python main.py --method $mode --batch_size 14
