@@ -179,6 +179,8 @@ class Effectiveness:
                 if face_distance <= 0.6:
                     matching_count += 1
                 valid_count += 1
+            except IndexError:
+                valid_count += 1
             except Exception as e:
                 logger.warning(e)
 
@@ -271,6 +273,8 @@ class Effectiveness:
                 logger.error(e)
                 return (0, 0)
 
+        return (0, 0)
+
     def get_face_effectiveness(
         self,
         logger,
@@ -320,9 +324,10 @@ class Effectiveness:
                 "pert": (0, 0),
                 "swap": (0, 0),
                 "pert_swap": (0, 0),
-                "anchor": (0, 0),
             },
         }
+        if anchor_imgs is not None:
+            effectivenesses["face++"]["anchor"] = (0, 0)
 
         effectivenesses["face_recognition"]["pert"] = self.count_matching_imgs(
             logger, source_imgs, pert_imgs
@@ -333,9 +338,10 @@ class Effectiveness:
         effectivenesses["face_recognition"]["pert_swap"] = self.count_matching_imgs(
             logger, source_imgs, pert_swap_imgs
         )
-        effectivenesses["face_recognition"]["anchor"] = self.count_matching_imgs(
-            logger, anchor_imgs, pert_swap_imgs
-        )
+        if anchor_imgs is not None:
+            effectivenesses["face_recognition"]["anchor"] = self.count_matching_imgs(
+                logger, anchor_imgs, pert_swap_imgs
+            )
 
         for i in range(source_imgs.shape[0]):
             pert = self.__get_face_recognition(logger, source_imgs[i], pert_imgs[i])
@@ -355,12 +361,13 @@ class Effectiveness:
                 a + b for a, b in zip(effectivenesses["face++"]["pert_swap"], pert_swap)
             )
 
-            anchor = self.__get_face_recognition(
-                logger, anchor_imgs[i], pert_swap_imgs[i]
-            )
-            effectivenesses["face++"]["anchor"] = tuple(
-                a + b for a, b in zip(effectivenesses["face++"]["anchor"], anchor)
-            )
+            if anchor_imgs is not None:
+                anchor = self.__get_face_recognition(
+                    logger, anchor_imgs[i], pert_swap_imgs[i]
+                )
+                effectivenesses["face++"]["anchor"] = tuple(
+                    a + b for a, b in zip(effectivenesses["face++"]["anchor"], anchor)
+                )
 
         return effectivenesses
 
