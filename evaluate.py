@@ -228,7 +228,6 @@ class Effectiveness:
     def __get_face_recognition(
         self, logger, img1: tensor, img2: tensor
     ) -> tuple[int, int]:
-
         buffered1 = BytesIO()
         img1 = img1 * 255
         img_image = Image.fromarray(img1.cpu().permute(1, 2, 0).byte().numpy())
@@ -261,19 +260,27 @@ class Effectiveness:
                             if response["confidence"] > response["thresholds"]["1e-5"]
                             else (0, 1)
                         )
+                    elif (
+                        "faces1" in response
+                        and len(response["faces1"]) == 0
+                        and "faces2" in response
+                        and len(response["faces2"]) == 0
+                    ):
+                        return (0, 1)
                     else:
-                        return (0, 0)
+                        logger.warning(response)
+                        return (0, 1e-10)
                 elif response.status_code == 403:
                     fail_count += 1
                     time.sleep(0.5)
                 else:
-                    logger.error(response.status_code)
-                    return (0, 0)
+                    logger.error(response)
+                    return (0, 1e-10)
             except BaseException as e:
                 logger.error(e)
-                return (0, 0)
+                return (0, 1e-10)
 
-        return (0, 0)
+        return (0, 1e-10)
 
     def get_face_effectiveness(
         self,

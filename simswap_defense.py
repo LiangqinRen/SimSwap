@@ -304,12 +304,12 @@ class SimSwapDefense(Base, nn.Module):
 
         self.logger.info(
             f"""pert utility(mse, psnr, ssim, lpips): ({pert_utilities['mse']:.5f}, {pert_utilities['psnr']:.5f}, {pert_utilities['ssim']:.5f}, {pert_utilities['lpips']:.5f})
-                pert as source swap utility(mse, psnr, ssim, lpips): ({pert_as_src_swap_utilities['mse']:.5f}, {pert_as_src_swap_utilities['psnr']:.5f}, {pert_as_src_swap_utilities['ssim']:.5f}, {pert_as_src_swap_utilities['lpips']:.5f})
-                pert as target swap utility(mse, psnr, ssim, lpips): ({pert_as_tgt_swap_utilities['mse']:.5f}, {pert_as_tgt_swap_utilities['psnr']:.5f}, {pert_as_tgt_swap_utilities['ssim']:.5f}, {pert_as_tgt_swap_utilities['lpips']:.5f})
-                pert as src effectivenesses(face_recognition)(pert, swap, pert_swap, anchor): {tuple(f'{v[0] / v[1]:.5f}/{v[1]}' for k,v in source_effectivenesses['face_recognition'].items())}
-                pert as src effectivenesses(face++)(pert, swap, pert_swap, anchor): {tuple(f'{v[0] / v[1]:.5f}/{v[1]}' for k,v in source_effectivenesses['face++'].items())}
-                pert as tgt effectivenesses(face_recognition)(swap, pert_swap): ({tuple(f'{v[0] / v[1]:.5f}/{v[1]}' for k,v in target_effectivenesses['face_recognition'].items())}
-                pert as tgt effectivenesses(face++)(swap, pert_swap):{tuple(f'{v[0] / v[1]:.5f}/{v[1]}' for k,v in target_effectivenesses['face++'].items())}"""
+            pert as source swap utility(mse, psnr, ssim, lpips): ({pert_as_src_swap_utilities['mse']:.5f}, {pert_as_src_swap_utilities['psnr']:.5f}, {pert_as_src_swap_utilities['ssim']:.5f}, {pert_as_src_swap_utilities['lpips']:.5f})
+            pert as target swap utility(mse, psnr, ssim, lpips): ({pert_as_tgt_swap_utilities['mse']:.5f}, {pert_as_tgt_swap_utilities['psnr']:.5f}, {pert_as_tgt_swap_utilities['ssim']:.5f}, {pert_as_tgt_swap_utilities['lpips']:.5f})
+            pert as src effectivenesses(face_recognition)(pert, swap, pert_swap, anchor): {tuple(f'{v[0] / v[1]:.5f}/{v[1]}' for k,v in source_effectivenesses['face_recognition'].items())}
+            pert as src effectivenesses(face++)(pert, swap, pert_swap, anchor): {tuple(f'{v[0] / v[1]:.5f}/{v[1]}' for k,v in source_effectivenesses['face++'].items())}
+            pert as tgt effectivenesses(face_recognition)(swap, pert_swap): {tuple(f'{v[0] / v[1]:.5f}/{v[1]}' for k,v in target_effectivenesses['face_recognition'].items())}
+            pert as tgt effectivenesses(face++)(swap, pert_swap):{tuple(f'{v[0] / v[1]:.5f}/{v[1]}' for k,v in target_effectivenesses['face++'].items())}"""
         )
 
     def __merge_metric(
@@ -590,19 +590,19 @@ class SimSwapDefense(Base, nn.Module):
             reverse_swap_imgs, reverse_noise_swap_imgs
         )
 
-        source_effectivenesses = self.effectiveness.calculate_effectiveness(
+        source_effectivenesses = self.effectiveness.calculate_as_source_effectiveness(
+            self.logger,
             imgs1,
             x_imgs,
             swap_imgs,
             noise_swap_imgs,
             anchors_imgs,
         )
-        target_effectivenesses = self.effectiveness.calculate_effectiveness(
+        target_effectivenesses = self.effectiveness.calculate_as_target_effectiveness(
+            self.logger,
             imgs2,
-            x_imgs,
             reverse_swap_imgs,
             reverse_noise_swap_imgs,
-            anchors_imgs,
         )
 
         self.__save_robustness_samples(
@@ -651,19 +651,19 @@ class SimSwapDefense(Base, nn.Module):
             reverse_swap_imgs, reverse_blur_swap_imgs
         )
 
-        source_effectivenesses = self.effectiveness.calculate_effectiveness(
+        source_effectivenesses = self.effectiveness.calculate_as_source_effectiveness(
+            self.logger,
             imgs1,
             x_imgs,
             swap_imgs,
             blur_swap_imgs,
             anchors_imgs,
         )
-        target_effectivenesses = self.effectiveness.calculate_effectiveness(
+        target_effectivenesses = self.effectiveness.calculate_as_target_effectiveness(
+            self.logger,
             imgs2,
-            x_imgs,
             reverse_swap_imgs,
             reverse_blur_swap_imgs,
-            anchors_imgs,
         )
 
         self.__save_robustness_samples(
@@ -696,7 +696,7 @@ class SimSwapDefense(Base, nn.Module):
         x_imgs: tensor,
         anchors_imgs: tensor,
     ) -> tuple[dict, dict, dict, dict]:
-        compress_rate = 90
+        compress_rate = 80
         compress_imgs = self.__jpeg_compress(x_imgs, compress_rate)
         compress_identity = self._get_imgs_identity(compress_imgs)
         compress_swap_imgs = self.target(None, imgs2, compress_identity, None, True)
@@ -712,19 +712,19 @@ class SimSwapDefense(Base, nn.Module):
             reverse_swap_imgs, reverse_compress_swap_imgs
         )
 
-        source_effectivenesses = self.effectiveness.calculate_effectiveness(
+        source_effectivenesses = self.effectiveness.calculate_as_source_effectiveness(
+            self.logger,
             imgs1,
             x_imgs,
             swap_imgs,
             compress_swap_imgs,
             anchors_imgs,
         )
-        target_effectivenesses = self.effectiveness.calculate_effectiveness(
+        target_effectivenesses = self.effectiveness.calculate_as_target_effectiveness(
+            self.logger,
             imgs2,
-            x_imgs,
             reverse_swap_imgs,
             reverse_compress_swap_imgs,
-            anchors_imgs,
         )
 
         self.__save_robustness_samples(
@@ -773,19 +773,19 @@ class SimSwapDefense(Base, nn.Module):
             reverse_swap_imgs, reverse_rotate_swap_imgs
         )
 
-        source_effectivenesses = self.effectiveness.calculate_effectiveness(
+        source_effectivenesses = self.effectiveness.calculate_as_source_effectiveness(
+            self.logger,
             imgs1,
             x_imgs,
             swap_imgs,
             rotate_swap_imgs,
             anchors_imgs,
         )
-        target_effectivenesses = self.effectiveness.calculate_effectiveness(
+        target_effectivenesses = self.effectiveness.calculate_as_target_effectiveness(
+            self.logger,
             imgs2,
-            x_imgs,
             reverse_swap_imgs,
             reverse_rotate_swap_imgs,
-            anchors_imgs,
         )
 
         self.__save_robustness_samples(
@@ -872,12 +872,12 @@ class SimSwapDefense(Base, nn.Module):
         torch.cuda.empty_cache()
         self.logger.info(
             f"""
-        {"robustness":<12} | utility(mse, psnr, ssim, lpips) source, target | effectiveness(pert src swap, pert tgt swap)
-        {"noise":<12} | {tuple(f'{x:.5f}' for x in noise_source_swap_utilities.values())}, {tuple(f'{x:.5f}' for x in noise_target_swap_utilities.values())} | {noise_source_effectivenesses['pert_swap']:.5f}, {noise_target_effectivenesses['pert_swap']:.5f}
-        {"blur":<12} | {tuple(f'{x:.5f}' for x in blur_source_swap_utilities.values())}, {tuple(f'{x:.5f}' for x in blur_target_swap_utilities.values())} | {blur_source_effectivenesses['pert_swap']:.5f}, {blur_target_effectivenesses['pert_swap']:.5f}
-        {"compress":<12} | {tuple(f'{x:.5f}' for x in compress_source_swap_utilities.values())}, {tuple(f'{x:.5f}' for x in compress_target_swap_utilities.values())} | {compress_source_effectivenesses['pert_swap']:.5f}, {compress_target_effectivenesses['pert_swap']:.5f}
-        {"rotate":<12} | {tuple(f'{x:.5f}' for x in rotate_source_swap_utilities.values())}, {tuple(f'{x:.5f}' for x in rotate_target_swap_utilities.values())} | {rotate_source_effectivenesses['pert_swap']:.5f}, {rotate_target_effectivenesses['pert_swap']:.5f}
-        """
+            robustness | utility(mse, psnr, ssim, lpips) source, target | effectiveness face recognition(pert src swap, pert tgt swap) face++(pert src swap, pert tgt swap)
+            noise | {tuple(f'{x:.5f}' for x in noise_source_swap_utilities.values())}, {tuple(f'{x:.5f}' for x in noise_target_swap_utilities.values())} | ({noise_source_effectivenesses['face_recognition']['pert_swap'][0]/noise_source_effectivenesses['face_recognition']['pert_swap'][1]:.5f}, {noise_target_effectivenesses['face_recognition']['pert_swap'][0]/noise_target_effectivenesses['face_recognition']['pert_swap'][1]:.5f}), ({noise_source_effectivenesses['face++']['pert_swap'][0]/noise_source_effectivenesses['face++']['pert_swap'][1]:.5f},{noise_target_effectivenesses['face++']['pert_swap'][0]/noise_target_effectivenesses['face++']['pert_swap'][1]:.5f})
+            blur | {tuple(f'{x:.5f}' for x in blur_source_swap_utilities.values())}, {tuple(f'{x:.5f}' for x in blur_target_swap_utilities.values())} | ({blur_source_effectivenesses['face_recognition']['pert_swap'][0]/blur_source_effectivenesses['face_recognition']['pert_swap'][1]:.5f}, {blur_target_effectivenesses['face_recognition']['pert_swap'][0]/blur_target_effectivenesses['face_recognition']['pert_swap'][1]:.5f}), ({blur_source_effectivenesses['face++']['pert_swap'][0]/blur_source_effectivenesses['face++']['pert_swap'][1]:.5f}) {blur_target_effectivenesses['face++']['pert_swap'][0]/blur_target_effectivenesses['face++']['pert_swap'][1]:.5f})
+            compress | {tuple(f'{x:.5f}' for x in compress_source_swap_utilities.values())}, {tuple(f'{x:.5f}' for x in compress_target_swap_utilities.values())} | ({compress_source_effectivenesses['face_recognition']['pert_swap'][0]/compress_source_effectivenesses['face_recognition']['pert_swap'][1]:.5f}, {compress_target_effectivenesses['face_recognition']['pert_swap'][0]/compress_target_effectivenesses['face_recognition']['pert_swap'][1]:.5f}), ({compress_source_effectivenesses['face++']['pert_swap'][0]/compress_source_effectivenesses['face++']['pert_swap'][1]:.5f}) {compress_target_effectivenesses['face++']['pert_swap'][0]/compress_target_effectivenesses['face++']['pert_swap'][1]:.5f})
+            rotate | {tuple(f'{x:.5f}' for x in rotate_source_swap_utilities.values())}, {tuple(f'{x:.5f}' for x in rotate_target_swap_utilities.values())} | ({rotate_source_effectivenesses['face_recognition']['pert_swap'][0]/rotate_source_effectivenesses['face_recognition']['pert_swap'][1]:.5f}, {rotate_target_effectivenesses['face_recognition']['pert_swap'][0]/rotate_target_effectivenesses['face_recognition']['pert_swap'][1]:.5f}), ({rotate_source_effectivenesses['face++']['pert_swap'][0]/rotate_source_effectivenesses['face++']['pert_swap'][1]:.5f}) {rotate_target_effectivenesses['face++']['pert_swap'][0]/rotate_target_effectivenesses['face++']['pert_swap'][1]:.5f})
+            """
         )
 
     def __merge_robustness_metric(
@@ -1505,12 +1505,12 @@ class SimSwapDefense(Base, nn.Module):
         torch.cuda.empty_cache()
         self.logger.info(
             f"""
-        {"robustness":<12} | utility(mse, psnr, ssim, lpips) source, target | effectiveness(pert src swap, pert tgt swap)
-        {"noise":<12} | {tuple(f'{x:.5f}' for x in noise_source_swap_utilities.values())}, {tuple(f'{x:.5f}' for x in noise_target_swap_utilities.values())} | {noise_source_effectivenesses['pert_swap']:.5f}, {noise_target_effectivenesses['pert_swap']:.5f}
-        {"blur":<12} | {tuple(f'{x:.5f}' for x in blur_source_swap_utilities.values())}, {tuple(f'{x:.5f}' for x in blur_target_swap_utilities.values())} | {blur_source_effectivenesses['pert_swap']:.5f}, {blur_target_effectivenesses['pert_swap']:.5f}
-        {"compress":<12} | {tuple(f'{x:.5f}' for x in compress_source_swap_utilities.values())}, {tuple(f'{x:.5f}' for x in compress_target_swap_utilities.values())} | {compress_source_effectivenesses['pert_swap']:.5f}, {compress_target_effectivenesses['pert_swap']:.5f}
-        {"rotate":<12} | {tuple(f'{x:.5f}' for x in rotate_source_swap_utilities.values())}, {tuple(f'{x:.5f}' for x in rotate_target_swap_utilities.values())} | {rotate_source_effectivenesses['pert_swap']:.5f}, {rotate_target_effectivenesses['pert_swap']:.5f}
-        """
+            robustness | utility(mse, psnr, ssim, lpips) source, target | effectiveness face recognition(pert src swap, pert tgt swap) face++(pert src swap, pert tgt swap)
+            noise | {tuple(f'{x:.5f}' for x in noise_source_swap_utilities.values())}, {tuple(f'{x:.5f}' for x in noise_target_swap_utilities.values())} | ({noise_source_effectivenesses['face_recognition']['pert_swap'][0]/noise_source_effectivenesses['face_recognition']['pert_swap'][1]:.5f}, {noise_target_effectivenesses['face_recognition']['pert_swap'][0]/noise_target_effectivenesses['face_recognition']['pert_swap'][1]:.5f}), ({noise_source_effectivenesses['face++']['pert_swap'][0]/noise_source_effectivenesses['face++']['pert_swap'][1]:.5f}, {noise_target_effectivenesses['face++']['pert_swap'][0]/noise_target_effectivenesses['face++']['pert_swap'][1]:.5f})
+            blur | {tuple(f'{x:.5f}' for x in blur_source_swap_utilities.values())}, {tuple(f'{x:.5f}' for x in blur_target_swap_utilities.values())} | ({blur_source_effectivenesses['face_recognition']['pert_swap'][0]/blur_source_effectivenesses['face_recognition']['pert_swap'][1]:.5f}, {blur_target_effectivenesses['face_recognition']['pert_swap'][0]/blur_target_effectivenesses['face_recognition']['pert_swap'][1]:.5f}), ({blur_source_effectivenesses['face++']['pert_swap'][0]/blur_source_effectivenesses['face++']['pert_swap'][1]:.5f}, {blur_target_effectivenesses['face++']['pert_swap'][0]/blur_target_effectivenesses['face++']['pert_swap'][1]:.5f})
+            compress | {tuple(f'{x:.5f}' for x in compress_source_swap_utilities.values())}, {tuple(f'{x:.5f}' for x in compress_target_swap_utilities.values())} | ({compress_source_effectivenesses['face_recognition']['pert_swap'][0]/compress_source_effectivenesses['face_recognition']['pert_swap'][1]:.5f}, {compress_target_effectivenesses['face_recognition']['pert_swap'][0]/compress_target_effectivenesses['face_recognition']['pert_swap'][1]:.5f}), ({compress_source_effectivenesses['face++']['pert_swap'][0]/compress_source_effectivenesses['face++']['pert_swap'][1]:.5f}, {compress_target_effectivenesses['face++']['pert_swap'][0]/compress_target_effectivenesses['face++']['pert_swap'][1]:.5f})
+            rotate | {tuple(f'{x:.5f}' for x in rotate_source_swap_utilities.values())}, {tuple(f'{x:.5f}' for x in rotate_target_swap_utilities.values())} | ({rotate_source_effectivenesses['face_recognition']['pert_swap'][0]/rotate_source_effectivenesses['face_recognition']['pert_swap'][1]:.5f}, {rotate_target_effectivenesses['face_recognition']['pert_swap'][0]/rotate_target_effectivenesses['face_recognition']['pert_swap'][1]:.5f}), ({rotate_source_effectivenesses['face++']['pert_swap'][0]/rotate_source_effectivenesses['face++']['pert_swap'][1]:.5f}, {rotate_target_effectivenesses['face++']['pert_swap'][0]/rotate_target_effectivenesses['face++']['pert_swap'][1]:.5f})
+            """
         )
 
     def gan_both_robustness_metric(self):
@@ -1660,6 +1660,7 @@ class SimSwapDefense(Base, nn.Module):
             anchor_imgs.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
         )
 
+        count, min_dist, avg_dist = 0, 0, 0
         for i in range(imgs.shape[0]):
             distances = []
             for j in range(anchor_imgs.shape[0]):
@@ -1671,14 +1672,14 @@ class SimSwapDefense(Base, nn.Module):
                 distances.append((distance, j))
 
             sorted_distances = sorted(distances)
+            if len(sorted_distances) == 0:
+                continue
+            else:
+                count += 1
+                min_dist += sorted_distances[0][0]
+                avg_dist += sorted_distances[int(len(sorted_distances) / 2)][0]
 
-        if len(sorted_distances) == 0:
-            return None
-        else:
-            return (
-                sorted_distances[0][0],
-                sorted_distances[int(len(sorted_distances) / 2)][0],
-            )
+        return min_dist / count, avg_dist / count
 
     def calculate_distance(self):
         anchor_imgs_path = self.__get_anchor_imgs_path()
