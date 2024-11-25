@@ -260,11 +260,8 @@ class Effectiveness:
                             if response["confidence"] > response["thresholds"]["1e-5"]
                             else (0, 1)
                         )
-                    elif (
-                        "faces1" in response
-                        and len(response["faces1"]) == 0
-                        and "faces2" in response
-                        and len(response["faces2"]) == 0
+                    elif ("faces1" in response and len(response["faces1"]) == 0) or (
+                        "faces2" in response and len(response["faces2"]) == 0
                     ):
                         return (0, 1)
                     else:
