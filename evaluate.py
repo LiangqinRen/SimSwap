@@ -250,7 +250,7 @@ class Effectiveness:
         }
 
         fail_count = 0
-        while fail_count < 10:
+        while fail_count < 5:
             try:
                 response = requests.post(url, data=payload)
                 if response.status_code == 200:
@@ -274,8 +274,9 @@ class Effectiveness:
                     self.facepp_key_index = (self.facepp_key_index + 1) % len(
                         self.args.facepp_api_key
                     )
-                    time.sleep(0.1)
-                    fail_count += 1
+                    if self.facepp_key_index == 0:
+                        time.sleep(0.5)
+                        fail_count += 1
                 else:
                     self.logger.error(response)
                     return (0, 1e-10)

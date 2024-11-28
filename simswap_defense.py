@@ -225,14 +225,15 @@ class SimSwapDefense(Base, nn.Module):
 
     def __save_robustness_samples(self, experiment: str, imgs: list[tensor]) -> None:
         img_names = [
-            "source",
-            "target",
-            "swap",
-            "reverse_swap",
-            "pert",
-            experiment,
+            "img1",
+            "img2",
+            f"{experiment}",
             f"{experiment}_swap",
             f"reverse_{experiment}_swap",
+            "pert",
+            f"pert_{experiment}",
+            f"{experiment}_pert_swap",
+            f"reverse_{experiment}_pert_swap",
         ]
 
         for i, name in enumerate(img_names):
@@ -567,31 +568,37 @@ class SimSwapDefense(Base, nn.Module):
         self,
         imgs1: tensor,
         imgs2: tensor,
-        swap_imgs: tensor,
-        reverse_swap_imgs: tensor,
         x_imgs: tensor,
         anchors_imgs: tensor,
     ) -> tuple[dict, dict, dict, dict]:
         gauss_mean, gauss_std = 0, 0.1
-        noise_imgs = self.__gauss_noise(x_imgs, gauss_mean, gauss_std)
+
+        noise_imgs = self.__gauss_noise(imgs1, gauss_mean, gauss_std)
         noise_identity = self._get_imgs_identity(noise_imgs)
-        noise_swap_imgs = self.target(None, imgs2, noise_identity, None, True)
+        noise_pert_imgs = self.__gauss_noise(x_imgs, gauss_mean, gauss_std)
+        noise_pert_identity = self._get_imgs_identity(noise_pert_imgs)
+
         imgs2_identity = self._get_imgs_identity(imgs2)
+        noise_swap_imgs = self.target(None, imgs2, noise_identity, None, True)
         reverse_noise_swap_imgs = self.target(
             None, noise_imgs, imgs2_identity, None, True
+        )
+        noise_pert_swap_imgs = self.target(None, imgs2, noise_pert_identity, None, True)
+        reverse_noise_pert_swap_imgs = self.target(
+            None, noise_pert_imgs, imgs2_identity, None, True
         )
 
         source_effectivenesses = self.effectiveness.calculate_as_source_effectiveness(
             imgs1,
             x_imgs,
-            swap_imgs,
             noise_swap_imgs,
+            noise_pert_swap_imgs,
             anchors_imgs,
         )
         target_effectivenesses = self.effectiveness.calculate_as_target_effectiveness(
             imgs2,
-            reverse_swap_imgs,
             reverse_noise_swap_imgs,
+            reverse_noise_pert_swap_imgs,
         )
 
         self.__save_robustness_samples(
@@ -599,12 +606,13 @@ class SimSwapDefense(Base, nn.Module):
             [
                 imgs1,
                 imgs2,
-                swap_imgs,
-                reverse_swap_imgs,
-                x_imgs,
                 noise_imgs,
                 noise_swap_imgs,
                 reverse_noise_swap_imgs,
+                x_imgs,
+                noise_pert_imgs,
+                noise_pert_swap_imgs,
+                reverse_noise_pert_swap_imgs,
             ],
         )
 
@@ -667,31 +675,39 @@ class SimSwapDefense(Base, nn.Module):
         self,
         imgs1: tensor,
         imgs2: tensor,
-        swap_imgs: tensor,
-        reverse_swap_imgs: tensor,
         x_imgs: tensor,
         anchors_imgs: tensor,
     ) -> tuple[dict, dict, dict, dict]:
-        compress_rate = 80
-        compress_imgs = self.__jpeg_compress(x_imgs, compress_rate)
+        compress_rate = 85
+
+        compress_imgs = self.__jpeg_compress(imgs1, compress_rate)
         compress_identity = self._get_imgs_identity(compress_imgs)
-        compress_swap_imgs = self.target(None, imgs2, compress_identity, None, True)
+        compress_pert_imgs = self.__jpeg_compress(x_imgs, compress_rate)
+        compress_pert_identity = self._get_imgs_identity(compress_pert_imgs)
+
         imgs2_identity = self._get_imgs_identity(imgs2)
+        compress_swap_imgs = self.target(None, imgs2, compress_identity, None, True)
         reverse_compress_swap_imgs = self.target(
             None, compress_imgs, imgs2_identity, None, True
+        )
+        compress_pert_swap_imgs = self.target(
+            None, imgs2, compress_pert_identity, None, True
+        )
+        reverse_compress_pert_swap_imgs = self.target(
+            None, compress_pert_imgs, imgs2_identity, None, True
         )
 
         source_effectivenesses = self.effectiveness.calculate_as_source_effectiveness(
             imgs1,
             x_imgs,
-            swap_imgs,
             compress_swap_imgs,
+            compress_pert_swap_imgs,
             anchors_imgs,
         )
         target_effectivenesses = self.effectiveness.calculate_as_target_effectiveness(
             imgs2,
-            reverse_swap_imgs,
             reverse_compress_swap_imgs,
+            reverse_compress_pert_swap_imgs,
         )
 
         self.__save_robustness_samples(
@@ -699,12 +715,13 @@ class SimSwapDefense(Base, nn.Module):
             [
                 imgs1,
                 imgs2,
-                swap_imgs,
-                reverse_swap_imgs,
-                x_imgs,
                 compress_imgs,
                 compress_swap_imgs,
                 reverse_compress_swap_imgs,
+                x_imgs,
+                compress_pert_imgs,
+                compress_pert_swap_imgs,
+                reverse_compress_pert_swap_imgs,
             ],
         )
 
@@ -717,31 +734,39 @@ class SimSwapDefense(Base, nn.Module):
         self,
         imgs1: tensor,
         imgs2: tensor,
-        swap_imgs: tensor,
-        reverse_swap_imgs: tensor,
         x_imgs: tensor,
         anchors_imgs: tensor,
     ) -> tuple[dict, dict, dict, dict]:
         rotate_angle = 60
-        rotate_imgs = self.__rotate(x_imgs, rotate_angle)
+
+        rotate_imgs = self.__rotate(imgs1, rotate_angle)
         rotate_identity = self._get_imgs_identity(rotate_imgs)
-        rotate_swap_imgs = self.target(None, imgs2, rotate_identity, None, True)
+        rotate_pert_imgs = self.__rotate(x_imgs, rotate_angle)
+        rotate_pert_identity = self._get_imgs_identity(rotate_pert_imgs)
+
         imgs2_identity = self._get_imgs_identity(imgs2)
+        rotate_swap_imgs = self.target(None, imgs2, rotate_identity, None, True)
         reverse_rotate_swap_imgs = self.target(
             None, rotate_imgs, imgs2_identity, None, True
+        )
+        rotate_pert_swap_imgs = self.target(
+            None, imgs2, rotate_pert_identity, None, True
+        )
+        reverse_rotate_pert_swap_imgs = self.target(
+            None, rotate_pert_imgs, imgs2_identity, None, True
         )
 
         source_effectivenesses = self.effectiveness.calculate_as_source_effectiveness(
             imgs1,
             x_imgs,
-            swap_imgs,
             rotate_swap_imgs,
+            rotate_pert_swap_imgs,
             anchors_imgs,
         )
         target_effectivenesses = self.effectiveness.calculate_as_target_effectiveness(
             imgs2,
-            reverse_swap_imgs,
             reverse_rotate_swap_imgs,
+            reverse_rotate_pert_swap_imgs,
         )
 
         self.__save_robustness_samples(
@@ -749,12 +774,13 @@ class SimSwapDefense(Base, nn.Module):
             [
                 imgs1,
                 imgs2,
-                swap_imgs,
-                reverse_swap_imgs,
-                x_imgs,
                 rotate_imgs,
                 rotate_swap_imgs,
                 reverse_rotate_swap_imgs,
+                x_imgs,
+                rotate_pert_imgs,
+                rotate_pert_swap_imgs,
+                reverse_rotate_pert_swap_imgs,
             ],
         )
 
@@ -780,57 +806,31 @@ class SimSwapDefense(Base, nn.Module):
         imgs2 = self._load_imgs(imgs2_path)
         anchor_imgs = self._load_imgs(anchor_imgs_path)
 
-        imgs1_identity = self._get_imgs_identity(imgs1)
-        swap_imgs = self.target(None, imgs2, imgs1_identity, None, True)
-        imgs2_identity = self._get_imgs_identity(imgs2)
-        reverse_swap_imgs = self.target(None, imgs1, imgs2_identity, None, True)
-
         x_imgs, best_anchor_imgs = self.__perturb_pgd_imgs(imgs1, anchor_imgs)
 
         (
-            noise_source_swap_utilities,
-            noise_target_swap_utilities,
             noise_source_effectivenesses,
             noise_target_effectivenesses,
-        ) = self.__get_gauss_noise_metrics(
-            imgs1, imgs2, swap_imgs, reverse_swap_imgs, x_imgs, best_anchor_imgs
-        )
+        ) = self.__get_gauss_noise_metrics(imgs1, imgs2, x_imgs, best_anchor_imgs)
 
         (
-            blur_source_swap_utilities,
-            blur_target_swap_utilities,
-            blur_source_effectivenesses,
-            blur_target_effectivenesses,
-        ) = self.__get_gauss_blur_metrics(
-            imgs1, imgs2, swap_imgs, reverse_swap_imgs, x_imgs, best_anchor_imgs
-        )
-
-        (
-            compress_source_swap_utilities,
-            compress_target_swap_utilities,
             compress_source_effectivenesses,
             compress_target_effectivenesses,
-        ) = self.__get_compress_metrics(
-            imgs1, imgs2, swap_imgs, reverse_swap_imgs, x_imgs, best_anchor_imgs
-        )
+        ) = self.__get_compress_metrics(imgs1, imgs2, x_imgs, best_anchor_imgs)
 
         (
-            rotate_source_swap_utilities,
-            rotate_target_swap_utilities,
             rotate_source_effectivenesses,
             rotate_target_effectivenesses,
-        ) = self.__get_rotate_metrics(
-            imgs1, imgs2, swap_imgs, reverse_swap_imgs, x_imgs, best_anchor_imgs
-        )
+        ) = self.__get_rotate_metrics(imgs1, imgs2, x_imgs, best_anchor_imgs)
 
         torch.cuda.empty_cache()
         self.logger.info(
             f"""
-            robustness | utility(mse, psnr, ssim, lpips) source, target | effectiveness face recognition(pert src swap, pert tgt swap) face++(pert src swap, pert tgt swap)
-            noise | {tuple(f'{x:.5f}' for x in noise_source_swap_utilities.values())}, {tuple(f'{x:.5f}' for x in noise_target_swap_utilities.values())} | ({noise_source_effectivenesses['face_recognition']['pert_swap'][0]/noise_source_effectivenesses['face_recognition']['pert_swap'][1]:.5f}, {noise_target_effectivenesses['face_recognition']['pert_swap'][0]/noise_target_effectivenesses['face_recognition']['pert_swap'][1]:.5f}), ({noise_source_effectivenesses['face++']['pert_swap'][0]/noise_source_effectivenesses['face++']['pert_swap'][1]:.5f},{noise_target_effectivenesses['face++']['pert_swap'][0]/noise_target_effectivenesses['face++']['pert_swap'][1]:.5f})
-            blur | {tuple(f'{x:.5f}' for x in blur_source_swap_utilities.values())}, {tuple(f'{x:.5f}' for x in blur_target_swap_utilities.values())} | ({blur_source_effectivenesses['face_recognition']['pert_swap'][0]/blur_source_effectivenesses['face_recognition']['pert_swap'][1]:.5f}, {blur_target_effectivenesses['face_recognition']['pert_swap'][0]/blur_target_effectivenesses['face_recognition']['pert_swap'][1]:.5f}), ({blur_source_effectivenesses['face++']['pert_swap'][0]/blur_source_effectivenesses['face++']['pert_swap'][1]:.5f}) {blur_target_effectivenesses['face++']['pert_swap'][0]/blur_target_effectivenesses['face++']['pert_swap'][1]:.5f})
-            compress | {tuple(f'{x:.5f}' for x in compress_source_swap_utilities.values())}, {tuple(f'{x:.5f}' for x in compress_target_swap_utilities.values())} | ({compress_source_effectivenesses['face_recognition']['pert_swap'][0]/compress_source_effectivenesses['face_recognition']['pert_swap'][1]:.5f}, {compress_target_effectivenesses['face_recognition']['pert_swap'][0]/compress_target_effectivenesses['face_recognition']['pert_swap'][1]:.5f}), ({compress_source_effectivenesses['face++']['pert_swap'][0]/compress_source_effectivenesses['face++']['pert_swap'][1]:.5f}) {compress_target_effectivenesses['face++']['pert_swap'][0]/compress_target_effectivenesses['face++']['pert_swap'][1]:.5f})
-            rotate | {tuple(f'{x:.5f}' for x in rotate_source_swap_utilities.values())}, {tuple(f'{x:.5f}' for x in rotate_target_swap_utilities.values())} | ({rotate_source_effectivenesses['face_recognition']['pert_swap'][0]/rotate_source_effectivenesses['face_recognition']['pert_swap'][1]:.5f}, {rotate_target_effectivenesses['face_recognition']['pert_swap'][0]/rotate_target_effectivenesses['face_recognition']['pert_swap'][1]:.5f}), ({rotate_source_effectivenesses['face++']['pert_swap'][0]/rotate_source_effectivenesses['face++']['pert_swap'][1]:.5f}) {rotate_target_effectivenesses['face++']['pert_swap'][0]/rotate_target_effectivenesses['face++']['pert_swap'][1]:.5f})
+            noise, compress, rotate
+            source face_rec(robust swap, robust pert swap, anchor), face++(robust swap, robust pert swap, anchor), target face_rec(swap, robust pert swap), face++(swap, robust pert swap)
+            {self.__generate_iter_robustness_log(noise_source_effectivenesses,noise_target_effectivenesses)}
+            {self.__generate_iter_robustness_log(compress_source_effectivenesses,compress_target_effectivenesses)}
+            {self.__generate_iter_robustness_log(rotate_source_effectivenesses,rotate_target_effectivenesses)}
             """
         )
 
@@ -923,17 +923,10 @@ class SimSwapDefense(Base, nn.Module):
                 imgs1, anchor_imgs, silent=True
             )
 
-            imgs1_identity = self._get_imgs_identity(imgs1)
-            swap_imgs = self.target(None, imgs2, imgs1_identity, None, True)
-            imgs2_identity = self._get_imgs_identity(imgs2)
-            reverse_swap_imgs = self.target(None, imgs1, imgs2_identity, None, True)
-
             (
                 noise_source_effectivenesses,
                 noise_target_effectivenesses,
-            ) = self.__get_gauss_noise_metrics(
-                imgs1, imgs2, swap_imgs, reverse_swap_imgs, x_imgs, best_anchor_imgs
-            )
+            ) = self.__get_gauss_noise_metrics(imgs1, imgs2, x_imgs, best_anchor_imgs)
 
             self.__merge_robustness_metric(
                 data,
@@ -945,9 +938,7 @@ class SimSwapDefense(Base, nn.Module):
             (
                 compress_source_effectivenesses,
                 compress_target_effectivenesses,
-            ) = self.__get_compress_metrics(
-                imgs1, imgs2, swap_imgs, reverse_swap_imgs, x_imgs, best_anchor_imgs
-            )
+            ) = self.__get_compress_metrics(imgs1, imgs2, x_imgs, best_anchor_imgs)
             self.__merge_robustness_metric(
                 data,
                 compress_source_effectivenesses,
@@ -958,9 +949,7 @@ class SimSwapDefense(Base, nn.Module):
             (
                 rotate_source_effectivenesses,
                 rotate_target_effectivenesses,
-            ) = self.__get_rotate_metrics(
-                imgs1, imgs2, swap_imgs, reverse_swap_imgs, x_imgs, best_anchor_imgs
-            )
+            ) = self.__get_rotate_metrics(imgs1, imgs2, x_imgs, best_anchor_imgs)
             self.__merge_robustness_metric(
                 data,
                 rotate_source_effectivenesses,
@@ -971,7 +960,7 @@ class SimSwapDefense(Base, nn.Module):
             torch.cuda.empty_cache()
             self.logger.info(
                 f"""
-            source(face_rec swap, pert_swap, anchor), (face++ swap, pert_swap, anchor), target(face_rec swap, pert_swap), (face++ swap, pert_swap)
+            source face_rec(robust swap, robust pert swap, anchor), face++(robust swap, robust pert swap, anchor), target face_rec(swap, robust pert swap), face++(swap, robust pert swap)
             {self.__generate_iter_robustness_log(noise_source_effectivenesses,noise_target_effectivenesses)}
             {self.__generate_iter_robustness_log(compress_source_effectivenesses,compress_target_effectivenesses)}
             {self.__generate_iter_robustness_log(rotate_source_effectivenesses,rotate_target_effectivenesses)}
