@@ -6,6 +6,7 @@ import argparse
 import pathlib
 import random
 import os
+import json
 
 import numpy as np
 
@@ -64,6 +65,15 @@ def get_file_and_console_logger(args):
     with open(os.path.join(args.log_dir, "notes.txt"), "w") as f:
         pass
 
+    try:
+        with open(os.path.join(args.data_dir, "facepp_keys.json")) as f:
+            data = json.load(f)
+            args.facepp_api_key = data["api_key"]
+            args.facepp_api_secret = data["api_secret"]
+    except Exception as e:
+        logger.warning(e)
+        quit()
+
     return logger
 
 
@@ -79,9 +89,6 @@ def get_argparser():
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--testset_percentage", type=int, default=10)
-    parser.add_argument(
-        "--effectiveness_threshold", type=float, default=0.9671370387077332
-    )
 
     parser.add_argument("--pgd_epsilon", type=float, default=1e-2)
     parser.add_argument("--pgd_limit", type=float, default=5e-2)
@@ -98,7 +105,10 @@ def show_parameters(args, logger) -> None:
     content = "Parameter configuration:\n"
 
     for arg in vars(args).keys():
-        content += f"\t{arg}: {getattr(args, arg)}\n"
+        if isinstance(getattr(args, arg), list):
+            content += f"\t{arg}: {len(getattr(args, arg))}\n"
+        else:
+            content += f"\t{arg}: {getattr(args, arg)}\n"
 
     logger.info(content)
 
