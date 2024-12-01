@@ -83,6 +83,8 @@ def get_argparser():
     parser.add_argument("--log_interval", type=int, default=100)
     parser.add_argument("--method", type=str)
     parser.add_argument("--data_dir", type=str, default="dataset")
+    parser.add_argument("--anchor_dir", type=str, default="real")
+    parser.add_argument("--anchor_index", type=int, default=0)
     parser.add_argument("--random_seed", type=int, default=0)
 
     parser.add_argument("--metric_people_image", type=int, default=5)

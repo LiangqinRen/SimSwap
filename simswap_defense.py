@@ -27,7 +27,14 @@ class SimSwapDefense(Base, nn.Module):
         self.dataset_dir = join(args.data_dir, "vggface2_crop_224")
         self.trainset_dir = join(args.data_dir, "train")
         self.testset_dir = join(args.data_dir, "test")
-        self.anchorset_dir = join(args.data_dir, "anchor")
+        self.anchorset_dir = join(args.data_dir, "anchor", args.anchor_dir)
+
+        self.imgs1_path = [
+            join(self.samples_dir, i) for i in ["mtdm.jpg", "james.jpg", "source.png"]
+        ]
+        self.imgs2_path = [
+            join(self.samples_dir, i) for i in ["6.jpg", "6.jpg", "6.jpg"]
+        ]
 
         self.pgd_loss_weights = {"pert": 1000, "identity": 10000, "latent": 0.1}
         self.pgd_loss_limits = {"latent": 20}
@@ -81,8 +88,8 @@ class SimSwapDefense(Base, nn.Module):
                 distances.append((distance, j))
 
             sorted_distances = sorted(distances)
-            if len(sorted_distances) > 0:
-                best_anchor_idx = sorted_distances[29][1]
+            if len(sorted_distances) > self.args.anchor_index:
+                best_anchor_idx = sorted_distances[self.args.anchor_index][1]
                 best_anchors.append(anchor_imgs[best_anchor_idx])
             else:
                 best_anchors.append(anchor_imgs[0])
@@ -257,17 +264,13 @@ class SimSwapDefense(Base, nn.Module):
 
         self.target.cuda().eval()
 
-        imgs1_path = [join(self.samples_dir, i) for i in ["zjl.jpg", "6.jpg", "jl.jpg"]]
-        imgs1 = self._load_imgs(imgs1_path)
+        imgs1 = self._load_imgs(self.imgs1_path)
         anchor_imgs_path = self.__get_anchor_imgs_path()
         anchor_imgs = self._load_imgs(anchor_imgs_path)
 
         x_imgs, best_anchor_imgs = self.__perturb_pgd_imgs(imgs1, anchor_imgs)
 
-        imgs2_path = [
-            join(self.samples_dir, i) for i in ["zrf.jpg", "zrf.jpg", "zrf.jpg"]
-        ]
-        imgs2 = self._load_imgs(imgs2_path)
+        imgs2 = self._load_imgs(self.imgs2_path)
         imgs1_src_swap, pert_imgs1_src_swap, imgs1_tgt_swap, pert_imgs1_tgt_swap = (
             self.__get_protect_both_swap_imgs(imgs1, imgs2, x_imgs)
         )
@@ -746,14 +749,10 @@ class SimSwapDefense(Base, nn.Module):
 
         self.target.cuda().eval()
 
-        imgs1_path = [join(self.samples_dir, i) for i in ["zjl.jpg", "6.jpg", "jl.jpg"]]
-        imgs2_path = [
-            join(self.samples_dir, i) for i in ["zrf.jpg", "zrf.jpg", "zrf.jpg"]
-        ]
         anchor_imgs_path = self.__get_anchor_imgs_path()
 
-        imgs1 = self._load_imgs(imgs1_path)
-        imgs2 = self._load_imgs(imgs2_path)
+        imgs1 = self._load_imgs(self.imgs1_path)
+        imgs2 = self._load_imgs(self.imgs2_path)
         anchor_imgs = self._load_imgs(anchor_imgs_path)
 
         x_imgs, best_anchor_imgs = self.__perturb_pgd_imgs(imgs1, anchor_imgs)
@@ -1026,21 +1025,9 @@ class SimSwapDefense(Base, nn.Module):
                     self.target.eval()
 
                     test_imgs1_path = random.sample(test_imgs_path, 7)
-                    test_imgs1_path.extend(
-                        [
-                            join(self.samples_dir, "zjl.jpg"),
-                            join(self.samples_dir, "6.jpg"),
-                            join(self.samples_dir, "jl.jpg"),
-                        ]
-                    )
+                    test_imgs1_path.extend(self.imgs1_path)
                     test_imgs2_path = random.sample(test_imgs_path, 7)
-                    test_imgs2_path.extend(
-                        [
-                            join(self.samples_dir, "zrf.jpg"),
-                            join(self.samples_dir, "zrf.jpg"),
-                            join(self.samples_dir, "zrf.jpg"),
-                        ]
-                    )
+                    test_imgs2_path.extend(self.imgs2_path)
 
                     test_imgs1 = self._load_imgs(test_imgs1_path)
                     test_imgs1_identity = self._get_imgs_identity(test_imgs1)
@@ -1181,12 +1168,8 @@ class SimSwapDefense(Base, nn.Module):
         self.target.cuda().eval()
         self.GAN_G.cuda().eval()
 
-        imgs1_path = [join(self.samples_dir, i) for i in ["zjl.jpg", "6.jpg", "jl.jpg"]]
-        imgs1 = self._load_imgs(imgs1_path)
-        imgs2_path = [
-            join(self.samples_dir, i) for i in ["zrf.jpg", "zrf.jpg", "zrf.jpg"]
-        ]
-        imgs2 = self._load_imgs(imgs2_path)
+        imgs1 = self._load_imgs(self.imgs1_path)
+        imgs2 = self._load_imgs(self.imgs2_path)
         pert_imgs1 = self.GAN_G(imgs1)
 
         imgs1_src_swap, pert_imgs1_src_swap, imgs1_tgt_swap, pert_imgs1_tgt_swap = (
@@ -1333,12 +1316,8 @@ class SimSwapDefense(Base, nn.Module):
         self.target.cuda().eval()
         self.GAN_G.cuda().eval()
 
-        imgs1_path = [join(self.samples_dir, i) for i in ["zjl.jpg", "6.jpg", "jl.jpg"]]
-        imgs1 = self._load_imgs(imgs1_path)
-        imgs2_path = [
-            join(self.samples_dir, i) for i in ["zrf.jpg", "zrf.jpg", "zrf.jpg"]
-        ]
-        imgs2 = self._load_imgs(imgs2_path)
+        imgs1 = self._load_imgs(self.imgs1_path)
+        imgs2 = self._load_imgs(self.imgs2_path)
         pert_imgs1 = self.GAN_G(imgs1)
 
         (
