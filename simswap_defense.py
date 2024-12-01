@@ -30,7 +30,7 @@ class SimSwapDefense(Base, nn.Module):
         self.anchorset_dir = join(args.data_dir, "anchor", args.anchor_dir)
 
         self.imgs1_path = [
-            join(self.samples_dir, i) for i in ["mtdm.jpg", "james.jpg", "source.png"]
+            join(self.samples_dir, i) for i in ["zjl.jpg", "james.jpg", "source.png"]
         ]
         self.imgs2_path = [
             join(self.samples_dir, i) for i in ["6.jpg", "6.jpg", "6.jpg"]
