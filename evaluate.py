@@ -24,24 +24,26 @@ class Utility:
     def calculate_utility(self, imgs1: torch.tensor, imgs2: torch.tensor):
         utilities = {"mse": [], "psnr": [], "ssim": [], "lpips": []}
 
-        imgs1_ndarray = imgs1.detach().cpu().numpy().transpose(0, 2, 3, 1)
-        imgs2_ndarray = imgs2.detach().cpu().numpy().transpose(0, 2, 3, 1)
+        imgs1_ndarray = imgs1.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
+        imgs2_ndarray = imgs2.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
         for i in range(min(imgs1.shape[0], imgs2.shape[0])):
             mse = metrics.mean_squared_error(imgs1_ndarray[i], imgs2_ndarray[i])
             utilities["mse"].append(mse)
 
-            psnr = metrics.peak_signal_noise_ratio(
-                imgs1_ndarray[i], imgs2_ndarray[i], data_range=1
+            utilities["psnr"].append(
+                metrics.peak_signal_noise_ratio(
+                    imgs1_ndarray[i], imgs2_ndarray[i], data_range=255
+                )
             )
-            utilities["psnr"].append(psnr)
 
-            ssim = metrics.structural_similarity(
-                imgs1_ndarray[i],
-                imgs2_ndarray[i],
-                channel_axis=2,
-                data_range=1,
+            utilities["ssim"].append(
+                metrics.structural_similarity(
+                    imgs1_ndarray[i],
+                    imgs2_ndarray[i],
+                    channel_axis=2,
+                    data_range=255,
+                )
             )
-            utilities["ssim"].append(ssim)
 
             lpips_score = self.lpips_distance(imgs1[i], imgs2[i])
             utilities["lpips"].append(lpips_score.detach().cpu().numpy())
