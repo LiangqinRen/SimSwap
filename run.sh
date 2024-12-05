@@ -25,6 +25,9 @@ then
 elif [[ $mode == 'robustness' ]]
 then
     python main.py --method $mode --batch_size 14
+elif [[ $mode == 'diff_identity_match' ]]
+then
+    python main.py --method $mode --batch_size 14 --anchor_dir "fake"
 else
     echo "Unrecognized mode!"
 fi

@@ -228,7 +228,7 @@ class Effectiveness:
 
         return distances
 
-    def __get_face_recognition(self, img1: tensor, img2: tensor) -> tuple[int, int]:
+    def __get_face_recognition(self, img1: tensor, img2: tensor):
         buffered1 = BytesIO()
         img1 = img1 * 255
         img_image = Image.fromarray(img1.cpu().permute(1, 2, 0).byte().numpy())
@@ -285,6 +285,23 @@ class Effectiveness:
                 return (0, 1e-10)
 
         return (0, 1e-10)
+
+    def calculate_single_effectiveness(self, imgs1: tensor, imgs2: tensor) -> dict:
+        effectivenesses = {
+            "face_recognition": (0, 0),
+            "face++": (0, 0),
+        }
+
+        effectivenesses["face_recognition"] = self.count_matching_imgs(imgs1, imgs2)
+
+        for i in range(imgs1.shape[0]):
+            result = self.__get_face_recognition(imgs1[i], imgs2[i])
+            effectivenesses["face++"] = (
+                effectivenesses["face++"][0] + result[0],
+                effectivenesses["face++"][1] + result[1],
+            )
+
+        return effectivenesses
 
     def calculate_as_source_effectiveness(
         self,

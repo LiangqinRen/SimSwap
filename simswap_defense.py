@@ -1497,3 +1497,32 @@ class SimSwapDefense(Base, nn.Module):
         self.logger.info(
             f"min and avg distance: {min_distance/total_batch:.5f}, {avg_distance/total_batch:.5f}"
         )
+
+    def check_different_identity_effectiveness(self):
+        anchor_imgs_path = self.__get_anchor_imgs_path()
+        anchor_imgs = self._load_imgs(anchor_imgs_path)
+
+        imgs1_path, imgs2_imgs_path = self._get_split_test_imgs_path()
+        total_batch = min(len(imgs1_path), len(imgs2_imgs_path)) // self.args.batch_size
+
+        import tqdm
+
+        effectivenesses = {
+            "face_recognition": (0, 0),
+            "face++": (0, 0),
+        }
+        for i in tqdm.tqdm(range(total_batch)):
+            iter_imgs1_path = imgs1_path[
+                i * self.args.batch_size : (i + 1) * self.args.batch_size
+            ]
+            imgs1 = self._load_imgs(iter_imgs1_path)
+            anchors = self.__find_best_anchor(imgs1, anchor_imgs)
+            result = self.effectiveness.calculate_single_effectiveness(imgs1, anchors)
+            self.__merge_dict(effectivenesses, result)
+            tqdm.tqdm.write(
+                f"face Recognition/Face++: {result['face_recognition'][0]/result['face_recognition'][1]*100:.3f}/{result['face_recognition'][1]}, {result['face++'][0]/result['face++'][1]*100:.3f}/{result['face++'][1]}"
+            )
+
+        self.logger.info(
+            f"face Recognition/Face++: {effectivenesses['face_recognition'][0]/effectivenesses['face_recognition'][1]*100:.3f}/{effectivenesses['face_recognition'][1]}, {effectivenesses['face++'][0]/effectivenesses['face++'][1]*100:.3f}/{effectivenesses['face++'][1]}"
+        )

@@ -26,6 +26,7 @@ def main():
         "gan_both_robustness_sample": defense.gan_both_robustness_sample,
         "gan_both_robustness_metric": defense.gan_both_robustness_metric,
         "distance": defense.calculate_distance,
+        "diff_identity_match": defense.check_different_identity_effectiveness,
     }
 
     if args.method in defense_functions:
