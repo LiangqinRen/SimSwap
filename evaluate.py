@@ -1,5 +1,3 @@
-import cv2
-import os
 import torch
 import lpips
 import numpy as np
@@ -10,7 +8,6 @@ import time
 
 from facenet_pytorch import MTCNN, InceptionResnetV1
 from skimage import metrics
-from torchvision.models import vgg16, VGG16_Weights
 from torch import tensor
 import face_recognition
 from PIL import Image
@@ -18,48 +15,11 @@ from io import BytesIO
 
 
 class Utility:
-    import warnings
-
-    warnings.filterwarnings(
-        "ignore",
-        category=UserWarning,
-        message="The parameter 'pretrained' is deprecated",
-    )
-    warnings.filterwarnings(
-        "ignore",
-        category=UserWarning,
-        message="Arguments other than a weight enum or `None` for 'weights' are deprecated",
-    )
-
-    lpips_distance = lpips.LPIPS(net="vgg").cuda()
+    lpips_distance = lpips.LPIPS(net="vgg", verbose=False).cuda()
 
     def __init__(self, args, logger):
-        pass
-
-    def compare(self, imgs1_list, imgs2_list):
-        utilities = {"mse": [], "ssim": [], "psnr": []}
-        for idx in range(min(imgs1_list.shape[0], imgs2_list.shape[0])):
-            img1 = imgs1_list[idx]
-            img2 = imgs2_list[idx]
-            mse = metrics.mean_squared_error(img1, img2)
-            utilities["mse"].append(mse)
-
-            psnr = metrics.peak_signal_noise_ratio(img1, img2, data_range=255)
-            utilities["psnr"].append(psnr)
-
-            ssim = metrics.structural_similarity(
-                img1, img2, channel_axis=2, multichannel=True, data_range=1
-            )
-            utilities["ssim"].append(ssim)
-
-        for i in utilities:
-            utilities[i] = np.mean(utilities[i])
-
-        return (
-            utilities["mse"],
-            utilities["ssim"],
-            utilities["psnr"],
-        )
+        self.args = args
+        self.logger = logger
 
     def calculate_utility(self, imgs1: torch.tensor, imgs2: torch.tensor):
         utilities = {"mse": [], "psnr": [], "ssim": [], "lpips": []}
@@ -97,8 +57,6 @@ class Effectiveness:
         self.args = args
         self.logger = logger
 
-        self.facepp_key_index = 0
-
         self.mtcnn = MTCNN(
             image_size=160,
             device="cuda",
@@ -110,51 +68,7 @@ class Effectiveness:
         ).cuda()
         self.FaceVerification.eval()
 
-    def detect_faces(self, imgs1, imgs2):
-        IMG1 = []
-        IMG2 = []
-        for idx in range(min(imgs1.shape[0], imgs2.shape[0])):
-            imgs1_o = imgs1[idx]
-            imgs2_o = imgs2[idx]
-
-            img1_cropped = self.mtcnn(imgs1_o)
-            img2_cropped = self.mtcnn(imgs2_o)
-            if img1_cropped == None:
-                temp = torch.ones((3, 160, 160))
-                IMG1.append(temp)
-            else:
-                IMG1.append(img1_cropped)
-
-            if img2_cropped == None:
-                temp = torch.ones((3, 160, 160))
-                IMG2.append(temp)
-            else:
-                IMG2.append(img2_cropped)
-
-        IMG1 = torch.stack(IMG1, dim=0).cuda()
-        IMG2 = torch.stack(IMG2, dim=0).cuda()
-        return IMG1, IMG2
-
-    def compare(self, imgs1, imgs2):
-        count = 0
-        img1_cropped, img2_cropped = self.detect_faces(imgs1, imgs2)
-
-        with torch.no_grad():
-            img1_embeddings = self.FaceVerification(img1_cropped).detach().cpu()
-            img2_embeddings = self.FaceVerification(img2_cropped).detach().cpu()
-
-            dists = [
-                (e1 - e2).norm().item()
-                for e1, e2 in zip(img1_embeddings, img2_embeddings)
-            ]
-
-            for dist in dists:
-                if dist < self.threshold:
-                    count += 1
-
-        return count / img1_cropped.shape[0], sum(dists) / len(dists)
-
-    def count_matching_imgs(self, imgs1, imgs2):
+    def __get_facerec_matching(self, imgs1, imgs2):
         matching_count, valid_count = 0, 0
         for i in range(imgs1.shape[0]):
             try:
@@ -206,7 +120,7 @@ class Effectiveness:
 
     def get_images_distance(
         self, imgs1: torch.tensor, imgs2: torch.tensor
-    ):  # -> list[float]
+    ) -> list[float]:
         distances = []
         if imgs1.shape != imgs2.shape:
             return distances
@@ -228,7 +142,9 @@ class Effectiveness:
 
         return distances
 
-    def __get_face_recognition(self, img1: tensor, img2: tensor):
+    def __get_facepp_matching_single(
+        self, img1: tensor, img2: tensor, key: str, secret: str
+    ):
         buffered1 = BytesIO()
         img1 = img1 * 255
         img_image = Image.fromarray(img1.cpu().permute(1, 2, 0).byte().numpy())
@@ -243,14 +159,14 @@ class Effectiveness:
 
         url = "https://api-us.faceplusplus.com/facepp/v3/compare"
         payload = {
-            "api_key": self.args.facepp_api_key[self.facepp_key_index],
-            "api_secret": self.args.facepp_api_secret[self.facepp_key_index],
+            "api_key": key,
+            "api_secret": secret,
             "image_base64_1": img1_base64,
             "image_base64_2": img2_base64,
         }
 
         fail_count = 0
-        while fail_count < 5:
+        while fail_count < 10:
             try:
                 response = requests.post(url, data=payload)
                 if response.status_code == 200:
@@ -271,12 +187,8 @@ class Effectiveness:
                 elif response.status_code == 400:
                     return (0, 1)
                 elif response.status_code == 403:
-                    self.facepp_key_index = (self.facepp_key_index + 1) % len(
-                        self.args.facepp_api_key
-                    )
-                    if self.facepp_key_index == 0:
-                        time.sleep(0.5)
-                        fail_count += 1
+                    time.sleep(0.3)
+                    fail_count += 1
                 else:
                     self.logger.error(response)
                     return (0, 1e-10)
@@ -286,24 +198,40 @@ class Effectiveness:
 
         return (0, 1e-10)
 
+    def __get_facepp_matching(self, imgs1: tensor, imgs2: tensor):
+        from concurrent.futures import ThreadPoolExecutor
+
+        assert imgs1.shape == imgs2.shape
+
+        with ThreadPoolExecutor() as executor:
+            futures = [
+                executor.submit(
+                    self.__get_facepp_matching_single,
+                    imgs1[i],
+                    imgs2[i],
+                    self.args.facepp_api_key[i % len(self.args.facepp_api_key)],
+                    self.args.facepp_api_secret[i % len(self.args.facepp_api_secret)],
+                )
+                for i in range(imgs1.shape[0])
+            ]
+            results = [future.result() for future in futures]
+
+        success_count, total_count = 0, 0
+        for result in results:
+            success_count += result[0]
+            total_count += result[1]
+
+        return (success_count, total_count)
+
     def calculate_single_effectiveness(self, imgs1: tensor, imgs2: tensor) -> dict:
-        effectivenesses = {
-            "face_recognition": (0, 0),
-            "face++": (0, 0),
-        }
+        effectivenesses = {}
 
-        effectivenesses["face_recognition"] = self.count_matching_imgs(imgs1, imgs2)
-
-        for i in range(imgs1.shape[0]):
-            result = self.__get_face_recognition(imgs1[i], imgs2[i])
-            effectivenesses["face++"] = (
-                effectivenesses["face++"][0] + result[0],
-                effectivenesses["face++"][1] + result[1],
-            )
+        effectivenesses["facerec"] = self.__get_facerec_matching(imgs1, imgs2)
+        effectivenesses["face++"] = self.__get_facepp_matching(imgs1, imgs2)
 
         return effectivenesses
 
-    def calculate_as_source_effectiveness(
+    def calculate_effectiveness(
         self,
         source_imgs: tensor,
         pert_imgs: tensor,
@@ -311,82 +239,35 @@ class Effectiveness:
         pert_swap_imgs: tensor,
         anchor_imgs: tensor,
     ) -> dict:
-        effectivenesses = {
-            "face_recognition": {},
-            "face++": {
-                # "pert": (0, 0),
-                "swap": (0, 0),
-                "pert_swap": (0, 0),
-            },
-        }
-        if anchor_imgs is not None:
-            effectivenesses["face++"]["anchor"] = (0, 0)
+        effectivenesses = {"facerec": {}, "face++": {}}
+        if pert_imgs is not None:
+            effectivenesses["facerec"]["pert"] = self.__get_facerec_matching(
+                source_imgs, pert_imgs
+            )
+            effectivenesses["face++"]["pert"] = self.__get_facepp_matching(
+                source_imgs, pert_imgs
+            )
 
-        # effectivenesses["face_recognition"]["pert"] = self.count_matching_imgs(
-        #     source_imgs, pert_imgs
-        # )
-        effectivenesses["face_recognition"]["swap"] = self.count_matching_imgs(
+        effectivenesses["facerec"]["swap"] = self.__get_facerec_matching(
             source_imgs, swap_imgs
         )
-        effectivenesses["face_recognition"]["pert_swap"] = self.count_matching_imgs(
+        effectivenesses["face++"]["swap"] = self.__get_facepp_matching(
+            source_imgs, swap_imgs
+        )
+
+        effectivenesses["facerec"]["pert_swap"] = self.__get_facerec_matching(
             source_imgs, pert_swap_imgs
         )
-        if anchor_imgs is not None:
-            effectivenesses["face_recognition"]["anchor"] = self.count_matching_imgs(
-                anchor_imgs, pert_swap_imgs
-            )
-
-        for i in range(source_imgs.shape[0]):
-            pert = self.__get_face_recognition(source_imgs[i], pert_imgs[i])
-            # effectivenesses["face++"]["pert"] = tuple(
-            #     a + b for a, b in zip(effectivenesses["face++"]["pert"], pert)
-            # )
-
-            swap = self.__get_face_recognition(source_imgs[i], swap_imgs[i])
-            effectivenesses["face++"]["swap"] = tuple(
-                a + b for a, b in zip(effectivenesses["face++"]["swap"], swap)
-            )
-
-            pert_swap = self.__get_face_recognition(source_imgs[i], pert_swap_imgs[i])
-            effectivenesses["face++"]["pert_swap"] = tuple(
-                a + b for a, b in zip(effectivenesses["face++"]["pert_swap"], pert_swap)
-            )
-
-            if anchor_imgs is not None:
-                anchor = self.__get_face_recognition(anchor_imgs[i], pert_swap_imgs[i])
-                effectivenesses["face++"]["anchor"] = tuple(
-                    a + b for a, b in zip(effectivenesses["face++"]["anchor"], anchor)
-                )
-
-        return effectivenesses
-
-    def calculate_as_target_effectiveness(
-        self,
-        source_imgs: tensor,
-        swap_imgs: tensor,
-        pert_swap_imgs: tensor,
-    ) -> dict:
-        effectivenesses = {
-            "face_recognition": {},
-            "face++": {"swap": (0, 0), "pert_swap": (0, 0)},
-        }
-
-        effectivenesses["face_recognition"]["swap"] = self.count_matching_imgs(
-            source_imgs, swap_imgs
-        )
-        effectivenesses["face_recognition"]["pert_swap"] = self.count_matching_imgs(
+        effectivenesses["face++"]["pert_swap"] = self.__get_facepp_matching(
             source_imgs, pert_swap_imgs
         )
 
-        for i in range(source_imgs.shape[0]):
-            swap = self.__get_face_recognition(source_imgs[i], swap_imgs[i])
-            effectivenesses["face++"]["swap"] = tuple(
-                a + b for a, b in zip(effectivenesses["face++"]["swap"], swap)
+        if anchor_imgs is not None:
+            effectivenesses["facerec"]["anchor"] = self.__get_facerec_matching(
+                pert_swap_imgs, anchor_imgs
             )
-
-            pert_swap = self.__get_face_recognition(source_imgs[i], pert_swap_imgs[i])
-            effectivenesses["face++"]["pert_swap"] = tuple(
-                a + b for a, b in zip(effectivenesses["face++"]["pert_swap"], pert_swap)
+            effectivenesses["face++"]["anchor"] = self.__get_facepp_matching(
+                pert_swap_imgs, anchor_imgs
             )
 
         return effectivenesses

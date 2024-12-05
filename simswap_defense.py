@@ -4,14 +4,13 @@ import os
 import random
 import cv2
 import torch
-import torchvision
 import math
 
 import numpy as np
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
-import torchvision.transforms as transforms
+
 
 from os.path import join
 from torchvision.utils import save_image
@@ -48,6 +47,38 @@ class SimSwapDefense(Base, nn.Module):
         self.gan_loss_limits = {"identity": 0.003, "latent": 30}
 
         self.GAN_G = Generator(input_nc=3, output_nc=3, epsilon=self.gan_rgb_limits)
+
+    def __generate_iter_utility_log(self, utilities: dict) -> str:
+        return f"""
+        {tuple(f'{v:.5f}' for _,v in utilities.items())}
+        """.strip()
+
+    def __generate_summary_utility_log(self, data: dict, item: str, batch: int) -> str:
+        return f"""
+        {tuple(f'{x / (batch + 1):.5f}' for x in data[item])}
+        """.strip()
+
+    def __generate_iter_effectiveness_log(self, effectiveness: dict) -> str:
+        return f"""
+        {tuple(f'{v[0] / v[1] * 100:.3f}/{v[1]}' for k,v in effectiveness['facerec'].items())}, {tuple(f'{v[0] / v[1]* 100:.3f}/{v[1]}' for k,v in effectiveness['face++'].items())}
+        """.strip()
+
+    def __generate_summary_effectiveness_log(self, data: dict, item: str) -> str:
+        return f"""
+        {tuple(f'{v[0] / v[1] * 100:.3f}/{v[1]}' for k,v in data[item]['facerec'].items())}, {tuple(f'{v[0] / v[1]* 100:.3f}/{v[1]}' for k,v in data[item]['face++'].items())}
+        """.strip()
+
+    def __generate_iter_robustness_log(self, source: dict, target: dict) -> str:
+        return f"""
+        {tuple(f'{v[0]/v[1]*100:.3f}/{v[1]}' for _,v in source['facerec'].items())}, {tuple(f'{v[0]/v[1]*100:.3f}/{v[1]}' for _,v in source['face++'].items())}, {tuple(f'{v[0]/v[1]*100:.3f}/{v[1]}' for _,v in target['facerec'].items())}, {tuple(f'{v[0]/v[1]*100:.3f}/{v[1]}' for _,v in target['face++'].items())}
+        """.strip()
+
+    def __generate_summary_robustness_log(self, data: dict) -> str:
+        source = data["pert_as_src_effectiveness"]
+        target = data["pert_as_tgt_effectiveness"]
+        return f"""
+        {tuple(f'{v[0]/v[1]*100:.3f}/{v[1]}' for _,v in source['fafacerecce_recognition'].items())}, {tuple(f'{v[0]/v[1]*100:.3f}/{v[1]}' for _,v in source['face++'].items())}, {tuple(f'{v[0]/v[1]*100:.3f}/{v[1]}' for _,v in target['facerec'].items())}, {tuple(f'{v[0]/v[1]*100:.3f}/{v[1]}' for _,v in target['face++'].items())}
+        """.strip()
 
     def __get_protect_both_swap_imgs(
         self, imgs1: tensor, imgs2: tensor, pert_imgs1: tensor
@@ -192,7 +223,6 @@ class SimSwapDefense(Base, nn.Module):
 
     def __calculate_pgd_metric(
         self,
-        logger,
         imgs1: tensor,
         imgs2: tensor,
         x_imgs: tensor,
@@ -209,17 +239,15 @@ class SimSwapDefense(Base, nn.Module):
         pert_as_tgt_swap_utilities = self.utility.calculate_utility(
             imgs1_tgt_swap, pert_imgs1_tgt_swap
         )
-        source_effectivenesses = self.effectiveness.calculate_as_source_effectiveness(
+        source_effectivenesses = self.effectiveness.calculate_effectiveness(
             imgs1,
             x_imgs,
             imgs1_src_swap,
             pert_imgs1_src_swap,
             best_anchor_imgs,
         )
-        target_effectivenesses = self.effectiveness.calculate_as_target_effectiveness(
-            imgs2,
-            imgs1_tgt_swap,
-            pert_imgs1_tgt_swap,
+        target_effectivenesses = self.effectiveness.calculate_effectiveness(
+            imgs2, None, imgs1_tgt_swap, pert_imgs1_tgt_swap, None
         )
 
         return (
@@ -293,7 +321,6 @@ class SimSwapDefense(Base, nn.Module):
             source_effectivenesses,
             target_effectivenesses,
         ) = self.__calculate_pgd_metric(
-            self.logger,
             imgs1,
             imgs2,
             x_imgs,
@@ -305,13 +332,14 @@ class SimSwapDefense(Base, nn.Module):
         )
 
         self.logger.info(
-            f"""pert utility(mse, psnr, ssim, lpips): ({pert_utilities['mse']:.5f}, {pert_utilities['psnr']:.5f}, {pert_utilities['ssim']:.5f}, {pert_utilities['lpips']:.5f})
-            pert as source swap utility(mse, psnr, ssim, lpips): ({pert_as_src_swap_utilities['mse']:.5f}, {pert_as_src_swap_utilities['psnr']:.5f}, {pert_as_src_swap_utilities['ssim']:.5f}, {pert_as_src_swap_utilities['lpips']:.5f})
-            pert as target swap utility(mse, psnr, ssim, lpips): ({pert_as_tgt_swap_utilities['mse']:.5f}, {pert_as_tgt_swap_utilities['psnr']:.5f}, {pert_as_tgt_swap_utilities['ssim']:.5f}, {pert_as_tgt_swap_utilities['lpips']:.5f})
-            pert as src effectivenesses(face_recognition)(pert, swap, pert_swap, anchor): {tuple(f'{v[0] / v[1]:.5f}/{v[1]}' for k,v in source_effectivenesses['face_recognition'].items())}
-            pert as src effectivenesses(face++)(pert, swap, pert_swap, anchor): {tuple(f'{v[0] / v[1]:.5f}/{v[1]}' for k,v in source_effectivenesses['face++'].items())}
-            pert as tgt effectivenesses(face_recognition)(swap, pert_swap): {tuple(f'{v[0] / v[1]:.5f}/{v[1]}' for k,v in target_effectivenesses['face_recognition'].items())}
-            pert as tgt effectivenesses(face++)(swap, pert_swap):{tuple(f'{v[0] / v[1]:.5f}/{v[1]}' for k,v in target_effectivenesses['face++'].items())}"""
+            f"""
+        utility(mse, psnr, ssim, lpips), effectiveness(face recognition, face++) source(pert, swap, pert_swap, anchor) target(swap, pert_swap)
+        pert utility: {self.__generate_iter_utility_log(pert_utilities)}
+        pert as swap source utility: {self.__generate_iter_utility_log(pert_as_src_swap_utilities)}
+        pert as swap target utility: {self.__generate_iter_utility_log(pert_as_tgt_swap_utilities)}
+        pert as swap source effectiveness: {self.__generate_iter_effectiveness_log(source_effectivenesses)}
+        pert as swap target effectiveness: {self.__generate_iter_effectiveness_log(target_effectivenesses)}
+        """
         )
 
     def __merge_metric(
@@ -360,11 +388,11 @@ class SimSwapDefense(Base, nn.Module):
             )
         )
 
-        data["pert_as_src_effectiveness"]["face_recognition"] = {
+        data["pert_as_src_effectiveness"]["facerec"] = {
             key1: (value1[0] + value2[0], value1[1] + value2[1])
             for (key1, value1), (key2, value2) in zip(
-                data["pert_as_src_effectiveness"]["face_recognition"].items(),
-                source_effectivenesses["face_recognition"].items(),
+                data["pert_as_src_effectiveness"]["facerec"].items(),
+                source_effectivenesses["facerec"].items(),
             )
         }
         data["pert_as_src_effectiveness"]["face++"] = {
@@ -374,11 +402,11 @@ class SimSwapDefense(Base, nn.Module):
                 source_effectivenesses["face++"].items(),
             )
         }
-        data["pert_as_tgt_effectiveness"]["face_recognition"] = {
+        data["pert_as_tgt_effectiveness"]["facerec"] = {
             key1: (value1[0] + value2[0], value1[1] + value2[1])
             for (key1, value1), (key2, value2) in zip(
-                data["pert_as_tgt_effectiveness"]["face_recognition"].items(),
-                target_effectivenesses["face_recognition"].items(),
+                data["pert_as_tgt_effectiveness"]["facerec"].items(),
+                target_effectivenesses["facerec"].items(),
             )
         }
         data["pert_as_tgt_effectiveness"]["face++"] = {
@@ -429,7 +457,7 @@ class SimSwapDefense(Base, nn.Module):
             "pert_as_src_swap_utility": (0, 0, 0, 0),
             "pert_as_tgt_swap_utility": (0, 0, 0, 0),
             "pert_as_src_effectiveness": {
-                "face_recognition": {
+                "facerec": {
                     "pert": (0, 0),
                     "swap": (0, 0),
                     "pert_swap": (0, 0),
@@ -443,7 +471,7 @@ class SimSwapDefense(Base, nn.Module):
                 },
             },
             "pert_as_tgt_effectiveness": {
-                "face_recognition": {"swap": (0, 0), "pert_swap": (0, 0)},
+                "facerec": {"swap": (0, 0), "pert_swap": (0, 0)},
                 "face++": {"swap": (0, 0), "pert_swap": (0, 0)},
             },
         }
@@ -478,7 +506,6 @@ class SimSwapDefense(Base, nn.Module):
                 source_effectivenesses,
                 target_effectivenesses,
             ) = self.__calculate_pgd_metric(
-                self.logger,
                 imgs1,
                 imgs2,
                 x_imgs,
@@ -503,24 +530,25 @@ class SimSwapDefense(Base, nn.Module):
             torch.cuda.empty_cache()
 
             self.logger.info(
-                f"""[{i + 1:4}/{total_batch:4}]pert utility(mse, psnr, ssim, lpips): ({pert_utilities['mse']:.5f}, {pert_utilities['psnr']:.5f}, {pert_utilities['ssim']:.5f}, {pert_utilities['lpips']:.5f})
-                pert as source swap utility(mse, psnr, ssim, lpips): ({pert_as_src_swap_utilities['mse']:.5f}, {pert_as_src_swap_utilities['psnr']:.5f}, {pert_as_src_swap_utilities['ssim']:.5f}, {pert_as_src_swap_utilities['lpips']:.5f})
-                pert as target swap utility(mse, psnr, ssim, lpips): ({pert_as_tgt_swap_utilities['mse']:.5f}, {pert_as_tgt_swap_utilities['psnr']:.5f}, {pert_as_tgt_swap_utilities['ssim']:.5f}, {pert_as_tgt_swap_utilities['lpips']:.5f})
-                pert as src effectivenesses(face_recognition)(pert, swap, pert_swap, anchor): {tuple(f'{v[0] / v[1]:.5f}/{v[1]}' for k,v in source_effectivenesses['face_recognition'].items())}
-                pert as src effectivenesses(face++)(pert, swap, pert_swap, anchor): {tuple(f'{v[0] / v[1]:.5f}/{v[1]}' for k,v in source_effectivenesses['face++'].items())}
-                pert as tgt effectivenesses(face_recognition)(swap, pert_swap): ({tuple(f'{v[0] / v[1]:.5f}/{v[1]}' for k,v in target_effectivenesses['face_recognition'].items())}
-                pert as tgt effectivenesses(face++)(swap, pert_swap):{tuple(f'{v[0] / v[1]:.5f}/{v[1]}' for k,v in target_effectivenesses['face++'].items())}"""
+                f"""
+            utility(mse, psnr, ssim, lpips), effectiveness(face recognition, face++) source(pert, swap, pert_swap, anchor) target(swap, pert_swap)
+            pert utility: {self.__generate_iter_utility_log(pert_utilities)}
+            pert as swap source utility: {self.__generate_iter_utility_log(pert_as_src_swap_utilities)}
+            pert as swap target utility: {self.__generate_iter_utility_log(pert_as_tgt_swap_utilities)}
+            pert as swap source effectiveness: {self.__generate_iter_effectiveness_log(source_effectivenesses)}
+            pert as swap target effectiveness: {self.__generate_iter_effectiveness_log(target_effectivenesses)}
+            """
             )
 
             self.logger.info(
-                f"""[{i + 1:4}/{total_batch:4}]Average of {self.args.batch_size * (i + 1)} pictures: 
-                pert utility(mse, psnr, ssim, lpips): {tuple(f'{x / (i + 1):.5f}' for x in data['pert_utility'])}
-                pert as source swap utility(mse, psnr, ssim, lpips): {tuple(f'{x / (i + 1):.5f}' for x in data['pert_as_src_swap_utility'])}
-                pert as target swap utility(mse, psnr, ssim, lpips): {tuple(f'{x / (i + 1):.5f}' for x in data['pert_as_tgt_swap_utility'])}
-                pert as src effectivenesses(face_recognition)(pert, swap, pert_swap, anchor): ({tuple(f'{v[0] / v[1]:.5f}/{v[1]}' for k,v in data['pert_as_src_effectiveness']['face_recognition'].items())}
-                pert as src effectivenesses(face++)(pert, swap, pert_swap, anchor): {tuple(f'{v[0] / v[1]:.5f}/{v[1]}' for k,v in data['pert_as_src_effectiveness']['face++'].items())}
-                pert as tgt effectivenesses(face_recognition)(swap, pert_swap): ({tuple(f'{v[0] / v[1]:.5f}/{v[1]}' for k,v in data['pert_as_tgt_effectiveness']['face_recognition'].items())}
-                pert as tgt effectivenesses(face++)(swap, pert_swap): {tuple(f'{v[0] / v[1]:.5f}/{v[1]}' for k,v in data['pert_as_tgt_effectiveness']['face++'].items())}"""
+                f"""
+            Batch {i + 1:4}/{total_batch:4}, {self.args.batch_size * (i + 1)} pairs of pictures
+            {self.__generate_summary_utility_log(data, 'pert_utility', i)}
+            {self.__generate_summary_utility_log(data, 'pert_as_src_swap_utility', i)}
+            {self.__generate_summary_utility_log(data, 'pert_as_tgt_swap_utility', i)}
+            {self.__generate_summary_effectiveness_log(data, 'pert_as_src_effectiveness')}
+            {self.__generate_summary_effectiveness_log(data, 'pert_as_tgt_effectiveness')}
+            """
             )
 
     def __gauss_noise(
@@ -591,17 +619,15 @@ class SimSwapDefense(Base, nn.Module):
             None, noise_pert_imgs, imgs2_identity, None, True
         )
 
-        source_effectivenesses = self.effectiveness.calculate_as_source_effectiveness(
+        source_effectivenesses = self.effectiveness.calculate_effectiveness(
             imgs1,
             x_imgs,
             noise_swap_imgs,
             noise_pert_swap_imgs,
             anchors_imgs,
         )
-        target_effectivenesses = self.effectiveness.calculate_as_target_effectiveness(
-            imgs2,
-            reverse_noise_swap_imgs,
-            reverse_noise_pert_swap_imgs,
+        target_effectivenesses = self.effectiveness.calculate_effectiveness(
+            imgs2, None, reverse_noise_swap_imgs, reverse_noise_pert_swap_imgs, None
         )
 
         self.__save_robustness_samples(
@@ -650,17 +676,19 @@ class SimSwapDefense(Base, nn.Module):
             None, compress_pert_imgs, imgs2_identity, None, True
         )
 
-        source_effectivenesses = self.effectiveness.calculate_as_source_effectiveness(
+        source_effectivenesses = self.effectiveness.calculate_effectiveness(
             imgs1,
             x_imgs,
             compress_swap_imgs,
             compress_pert_swap_imgs,
             anchors_imgs,
         )
-        target_effectivenesses = self.effectiveness.calculate_as_target_effectiveness(
+        target_effectivenesses = self.effectiveness.calculate_effectiveness(
             imgs2,
+            None,
             reverse_compress_swap_imgs,
             reverse_compress_pert_swap_imgs,
+            None,
         )
 
         self.__save_robustness_samples(
@@ -709,17 +737,15 @@ class SimSwapDefense(Base, nn.Module):
             None, rotate_pert_imgs, imgs2_identity, None, True
         )
 
-        source_effectivenesses = self.effectiveness.calculate_as_source_effectiveness(
+        source_effectivenesses = self.effectiveness.calculate_effectiveness(
             imgs1,
             x_imgs,
             rotate_swap_imgs,
             rotate_pert_swap_imgs,
             anchors_imgs,
         )
-        target_effectivenesses = self.effectiveness.calculate_as_target_effectiveness(
-            imgs2,
-            reverse_rotate_swap_imgs,
-            reverse_rotate_pert_swap_imgs,
+        target_effectivenesses = self.effectiveness.calculate_effectiveness(
+            imgs2, None, reverse_rotate_swap_imgs, reverse_rotate_pert_swap_imgs, None
         )
 
         self.__save_robustness_samples(
@@ -807,18 +833,6 @@ class SimSwapDefense(Base, nn.Module):
             data[experiment]["pert_as_tgt_effectiveness"], target_effectivenesses
         )
 
-    def __generate_iter_robustness_log(self, source: dict, target: dict) -> str:
-        return f"""
-        {tuple(f'{v[0]/v[1]*100:.3f}/{v[1]}' for _,v in source['face_recognition'].items())}, {tuple(f'{v[0]/v[1]*100:.3f}/{v[1]}' for _,v in source['face++'].items())}, {tuple(f'{v[0]/v[1]*100:.3f}/{v[1]}' for _,v in target['face_recognition'].items())}, {tuple(f'{v[0]/v[1]*100:.3f}/{v[1]}' for _,v in target['face++'].items())}
-        """.strip()
-
-    def __generate_accumulate_robustness_log(self, data: dict) -> str:
-        source = data["pert_as_src_effectiveness"]
-        target = data["pert_as_tgt_effectiveness"]
-        return f"""
-        {tuple(f'{v[0]/v[1]*100:.3f}/{v[1]}' for _,v in source['face_recognition'].items())}, {tuple(f'{v[0]/v[1]*100:.3f}/{v[1]}' for _,v in source['face++'].items())}, {tuple(f'{v[0]/v[1]*100:.3f}/{v[1]}' for _,v in target['face_recognition'].items())}, {tuple(f'{v[0]/v[1]*100:.3f}/{v[1]}' for _,v in target['face++'].items())}
-        """.strip()
-
     def pgd_both_robustness_metric(self):
         self.logger.info(
             f"loss_weights: {self.pgd_loss_weights}, loss_limits: {self.pgd_loss_limits}"
@@ -829,7 +843,7 @@ class SimSwapDefense(Base, nn.Module):
         imgs1_path, imgs2_imgs_path = self._get_split_test_imgs_path()
         robustness_data = {
             "pert_as_src_effectiveness": {
-                "face_recognition": {
+                "facerec": {
                     "swap": (0, 0),
                     "pert_swap": (0, 0),
                     "anchor": (0, 0),
@@ -841,7 +855,7 @@ class SimSwapDefense(Base, nn.Module):
                 },
             },
             "pert_as_tgt_effectiveness": {
-                "face_recognition": {"swap": (0, 0), "pert_swap": (0, 0)},
+                "facerec": {"swap": (0, 0), "pert_swap": (0, 0)},
                 "face++": {"swap": (0, 0), "pert_swap": (0, 0)},
             },
         }
@@ -918,9 +932,9 @@ class SimSwapDefense(Base, nn.Module):
 
             self.logger.info(
                 f"""[{i + 1}/{total_batch}]Average of {self.args.batch_size * (i + 1)} pictures(noise, compress, rotate)
-            {self.__generate_accumulate_robustness_log(data['noise'])}
-            {self.__generate_accumulate_robustness_log(data['compress'])}
-            {self.__generate_accumulate_robustness_log(data['rotate'])}
+            {self.__generate_summary_robustness_log(data['noise'])}
+            {self.__generate_summary_robustness_log(data['compress'])}
+            {self.__generate_summary_robustness_log(data['rotate'])}
             """
             )
 
@@ -1140,17 +1154,19 @@ class SimSwapDefense(Base, nn.Module):
         pert_as_tgt_swap_utilities = self.utility.calculate_utility(
             imgs1_tgt_swap, pert_imgs1_tgt_swap
         )
-        source_effectivenesses = self.effectiveness.calculate_as_source_effectiveness(
+        source_effectivenesses = self.effectiveness.calculate_effectiveness(
             imgs1,
             pert_imgs1,
             imgs1_src_swap,
             pert_imgs1_src_swap,
             None,
         )
-        target_effectivenesses = self.effectiveness.calculate_as_target_effectiveness(
+        target_effectivenesses = self.effectiveness.calculate_effectiveness(
             imgs2,
+            None,
             imgs1_tgt_swap,
             pert_imgs1_tgt_swap,
+            None,
         )
 
         return (
@@ -1203,13 +1219,14 @@ class SimSwapDefense(Base, nn.Module):
         )
 
         self.logger.info(
-            f"""pert utility(mse, psnr, ssim, lpips): ({pert_utilities['mse']:.5f}, {pert_utilities['psnr']:.5f}, {pert_utilities['ssim']:.5f}, {pert_utilities['lpips']:.5f})
-                pert as source swap utility(mse, psnr, ssim, lpips): ({pert_as_src_swap_utilities['mse']:.5f}, {pert_as_src_swap_utilities['psnr']:.5f}, {pert_as_src_swap_utilities['ssim']:.5f}, {pert_as_src_swap_utilities['lpips']:.5f})
-                pert as target swap utility(mse, psnr, ssim, lpips): ({pert_as_tgt_swap_utilities['mse']:.5f}, {pert_as_tgt_swap_utilities['psnr']:.5f}, {pert_as_tgt_swap_utilities['ssim']:.5f}, {pert_as_tgt_swap_utilities['lpips']:.5f})
-                pert as src effectivenesses(face_recognition)(pert, swap, pert_swap, anchor): {tuple(f'{v[0] / v[1]:.5f}/{v[1]}' for k,v in source_effectivenesses['face_recognition'].items())}
-                pert as src effectivenesses(face++)(pert, swap, pert_swap, anchor): {tuple(f'{v[0] / v[1]:.5f}/{v[1]}' for k,v in source_effectivenesses['face++'].items())}
-                pert as tgt effectivenesses(face_recognition)(swap, pert_swap): ({tuple(f'{v[0] / v[1]:.5f}/{v[1]}' for k,v in target_effectivenesses['face_recognition'].items())}
-                pert as tgt effectivenesses(face++)(swap, pert_swap):{tuple(f'{v[0] / v[1]:.5f}/{v[1]}' for k,v in target_effectivenesses['face++'].items())}"""
+            f"""
+        utility(mse, psnr, ssim, lpips), effectiveness(face recognition, face++) source(pert, swap, pert_swap) target(swap, pert_swap)
+        pert utility: {self.__generate_iter_utility_log(pert_utilities)}
+        pert as swap source utility: {self.__generate_iter_utility_log(pert_as_src_swap_utilities)}
+        pert as swap target utility: {self.__generate_iter_utility_log(pert_as_tgt_swap_utilities)}
+        pert as swap source effectiveness: {self.__generate_iter_effectiveness_log(source_effectivenesses)}
+        pert as swap target effectiveness: {self.__generate_iter_effectiveness_log(target_effectivenesses)}
+        """
         )
 
     def gan_both_metric(self):
@@ -1225,7 +1242,7 @@ class SimSwapDefense(Base, nn.Module):
             "pert_as_src_swap_utility": (0, 0, 0, 0),
             "pert_as_tgt_swap_utility": (0, 0, 0, 0),
             "pert_as_src_effectiveness": {
-                "face_recognition": {
+                "facerec": {
                     "pert": (0, 0),
                     "swap": (0, 0),
                     "pert_swap": (0, 0),
@@ -1237,7 +1254,7 @@ class SimSwapDefense(Base, nn.Module):
                 },
             },
             "pert_as_tgt_effectiveness": {
-                "face_recognition": {"swap": (0, 0), "pert_swap": (0, 0)},
+                "facerec": {"swap": (0, 0), "pert_swap": (0, 0)},
                 "face++": {"swap": (0, 0), "pert_swap": (0, 0)},
             },
         }
@@ -1289,24 +1306,24 @@ class SimSwapDefense(Base, nn.Module):
             torch.cuda.empty_cache()
             self.logger.info(
                 f"""
-                pert utility(mse, psnr, ssim, lpips): ({pert_utilities['mse']:.5f}, {pert_utilities['psnr']:.5f}, {pert_utilities['ssim']:.5f}, {pert_utilities['lpips']:.5f})
-                pert as source swap utility(mse, psnr, ssim, lpips): ({pert_as_src_swap_utilities['mse']:.5f}, {pert_as_src_swap_utilities['psnr']:.5f}, {pert_as_src_swap_utilities['ssim']:.5f}, {pert_as_src_swap_utilities['lpips']:.5f})
-                pert as target swap utility(mse, psnr, ssim, lpips): ({pert_as_tgt_swap_utilities['mse']:.5f}, {pert_as_tgt_swap_utilities['psnr']:.5f}, {pert_as_tgt_swap_utilities['ssim']:.5f}, {pert_as_tgt_swap_utilities['lpips']:.5f})
-                pert as src effectivenesses(face_recognition)(pert, swap, pert_swap): {tuple(f'{v[0] / v[1]:.5f}/{v[1]}' for k,v in source_effectivenesses['face_recognition'].items())}
-                pert as src effectivenesses(face++)(pert, swap, pert_swap): {tuple(f'{v[0] / v[1]:.5f}/{v[1]}' for k,v in source_effectivenesses['face++'].items())}
-                pert as tgt effectivenesses(face_recognition)(swap, pert_swap): ({tuple(f'{v[0] / v[1]:.5f}/{v[1]}' for k,v in target_effectivenesses['face_recognition'].items())}
-                pert as tgt effectivenesses(face++)(swap, pert_swap):{tuple(f'{v[0] / v[1]:.5f}/{v[1]}' for k,v in target_effectivenesses['face++'].items())}"""
+            utility(mse, psnr, ssim, lpips), effectiveness(face recognition, face++) source(pert, swap, pert_swap) target(swap, pert_swap)
+            pert utility: {self.__generate_iter_utility_log(pert_utilities)}
+            pert as swap source utility: {self.__generate_iter_utility_log(pert_as_src_swap_utilities)}
+            pert as swap target utility: {self.__generate_iter_utility_log(pert_as_tgt_swap_utilities)}
+            pert as swap source effectiveness: {self.__generate_iter_effectiveness_log(source_effectivenesses)}
+            pert as swap target effectiveness: {self.__generate_iter_effectiveness_log(target_effectivenesses)}
+            """
             )
 
             self.logger.info(
-                f"""[{i + 1:4}/{total_batch:4}]Average of {self.args.batch_size * (i + 1)} pictures
-                pert utility(mse, psnr, ssim, lpips): {tuple(f'{x / (i + 1):.5f}' for x in data['pert_utility'])}
-                pert as source swap utility(mse, psnr, ssim, lpips): {tuple(f'{x / (i + 1):.5f}' for x in data['pert_as_src_swap_utility'])}
-                pert as target swap utility(mse, psnr, ssim, lpips): {tuple(f'{x / (i + 1):.5f}' for x in data['pert_as_tgt_swap_utility'])}
-                pert as src effectivenesses(face_recognition)(pert, swap, pert_swap): ({tuple(f'{v[0] / v[1]:.5f}/{v[1]}' for k,v in data['pert_as_src_effectiveness']['face_recognition'].items())}
-                pert as src effectivenesses(face++)(pert, swap, pert_swap): {tuple(f'{v[0] / v[1]:.5f}/{v[1]}' for k,v in data['pert_as_src_effectiveness']['face++'].items())}
-                pert as tgt effectivenesses(face_recognition)(swap, pert_swap): ({tuple(f'{v[0] / v[1]:.5f}/{v[1]}' for k,v in data['pert_as_tgt_effectiveness']['face_recognition'].items())}
-                pert as tgt effectivenesses(face++)(swap, pert_swap): {tuple(f'{v[0] / v[1]:.5f}/{v[1]}' for k,v in data['pert_as_tgt_effectiveness']['face++'].items())}"""
+                f"""
+            Batch {i + 1:4}/{total_batch:4}, {self.args.batch_size * (i + 1)} pairs of pictures
+            {self.__generate_summary_utility_log(data, 'pert_utility', i)}
+            {self.__generate_summary_utility_log(data, 'pert_as_src_swap_utility', i)}
+            {self.__generate_summary_utility_log(data, 'pert_as_tgt_swap_utility', i)}
+            {self.__generate_summary_effectiveness_log(data, 'pert_as_src_effectiveness')}
+            {self.__generate_summary_effectiveness_log(data, 'pert_as_tgt_effectiveness')}
+            """
             )
 
     def gan_both_robustness_sample(self):
@@ -1356,7 +1373,7 @@ class SimSwapDefense(Base, nn.Module):
         imgs1_path, imgs2_imgs_path = self._get_split_test_imgs_path()
         robustness_data = {
             "pert_as_src_effectiveness": {
-                "face_recognition": {
+                "facerec": {
                     "swap": (0, 0),
                     "pert_swap": (0, 0),
                 },
@@ -1366,7 +1383,7 @@ class SimSwapDefense(Base, nn.Module):
                 },
             },
             "pert_as_tgt_effectiveness": {
-                "face_recognition": {"swap": (0, 0), "pert_swap": (0, 0)},
+                "facerec": {"swap": (0, 0), "pert_swap": (0, 0)},
                 "face++": {"swap": (0, 0), "pert_swap": (0, 0)},
             },
         }
@@ -1438,9 +1455,9 @@ class SimSwapDefense(Base, nn.Module):
 
             self.logger.info(
                 f"""[{i + 1}/{total_batch}]Average of {self.args.batch_size * (i + 1)} pictures(noise, compress, rotate)
-            {self.__generate_accumulate_robustness_log(data['noise'])}
-            {self.__generate_accumulate_robustness_log(data['compress'])}
-            {self.__generate_accumulate_robustness_log(data['rotate'])}
+            {self.__generate_summary_robustness_log(data['noise'])}
+            {self.__generate_summary_robustness_log(data['compress'])}
+            {self.__generate_summary_robustness_log(data['rotate'])}
             """
             )
 
@@ -1508,7 +1525,7 @@ class SimSwapDefense(Base, nn.Module):
         import tqdm
 
         effectivenesses = {
-            "face_recognition": (0, 0),
+            "facerec": (0, 0),
             "face++": (0, 0),
         }
         for i in tqdm.tqdm(range(total_batch)):
@@ -1520,9 +1537,9 @@ class SimSwapDefense(Base, nn.Module):
             result = self.effectiveness.calculate_single_effectiveness(imgs1, anchors)
             self.__merge_dict(effectivenesses, result)
             tqdm.tqdm.write(
-                f"face Recognition/Face++: {result['face_recognition'][0]/result['face_recognition'][1]*100:.3f}/{result['face_recognition'][1]}, {result['face++'][0]/result['face++'][1]*100:.3f}/{result['face++'][1]}"
+                f"Face Recognition/Face++: {result['facerec'][0]/result['facerec'][1]*100:.3f}/{result['facerec'][1]}, {result['face++'][0]/result['face++'][1]*100:.3f}/{result['face++'][1]}"
             )
 
         self.logger.info(
-            f"face Recognition/Face++: {effectivenesses['face_recognition'][0]/effectivenesses['face_recognition'][1]*100:.3f}/{effectivenesses['face_recognition'][1]}, {effectivenesses['face++'][0]/effectivenesses['face++'][1]*100:.3f}/{effectivenesses['face++'][1]}"
+            f"Face Recognition/Face++: {effectivenesses['facerec'][0]/effectivenesses['facerec'][1]*100:.3f}/{effectivenesses['facerec'][1]}, {effectivenesses['face++'][0]/effectivenesses['face++'][1]*100:.3f}/{effectivenesses['face++'][1]}"
         )
