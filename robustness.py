@@ -147,12 +147,10 @@ class Robustness(Base, nn.Module):
 
     def sepmark(self, img1: tensor) -> dict:
         gauss_mean, gauss_std = 0, 0.1
-        gauss_size, gauss_sigma = 5, 3.0
-        jpeg_ratio = 75
+        jpeg_ratio = 85
         rotate_angle = 60
 
         noise_img1 = self.__gauss_noise(img1, gauss_mean, gauss_std)
-        blur_img1 = self.__gauss_blur(img1, gauss_size, gauss_sigma)
         compress_img1 = self.__jpeg_compress(img1, jpeg_ratio)
         rotate_img1 = self.__rotate(img1, rotate_angle)
 
@@ -162,8 +160,6 @@ class Robustness(Base, nn.Module):
         img1_noise_identity = self._get_imgs_identity(noise_img1)
         img1_noise_src_swap = self.target(None, img2, img1_noise_identity, None, True)
 
-        img1_blur_identity = self._get_imgs_identity(blur_img1)
-        img1_blur_src_swap = self.target(None, img2, img1_blur_identity, None, True)
         img1_compress_identity = self._get_imgs_identity(compress_img1)
         img1_compress_src_swap = self.target(
             None, img2, img1_compress_identity, None, True
@@ -172,7 +168,6 @@ class Robustness(Base, nn.Module):
         img1_rotate_src_swap = self.target(None, img2, img1_rotate_identity, None, True)
 
         img2_identity = self._get_imgs_identity(img2)
-        img1_blur_tgt_swap = self.target(None, blur_img1, img2_identity, None, True)
         img1_noise_tgt_swap = self.target(None, noise_img1, img2_identity, None, True)
         img1_compress_tgt_swap = self.target(
             None, compress_img1, img2_identity, None, True
@@ -187,10 +182,8 @@ class Robustness(Base, nn.Module):
             "img1_noise_src_swap": img1_noise_src_swap,
             "img1_src_swap": img1_src_swap,
             "img1_tgt_swap": img1_tgt_swap,
-            "img1_blur_src_swap": img1_blur_src_swap,
             "img1_compress_src_swap": img1_compress_src_swap,
             "img1_rotate_src_swap": img1_rotate_src_swap,
-            "img1_blur_tgt_swap": img1_blur_tgt_swap,
             "img1_noise_tgt_swap": img1_noise_tgt_swap,
             "img1_compress_tgt_swap": img1_compress_tgt_swap,
             "img1_rotate_tgt_swap": img1_rotate_tgt_swap,
