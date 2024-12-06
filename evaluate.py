@@ -97,12 +97,9 @@ class Effectiveness:
                 )
                 img1_encoding = face_recognition.face_encodings(img1, model="large")[0]
                 img2_encoding = face_recognition.face_encodings(img2, model="large")[0]
-                face_distances = face_recognition.face_distance(
+                matching_count += face_recognition.compare_faces(
                     [img1_encoding], img2_encoding
-                )
-                i, face_distance = next(enumerate(face_distances))
-                if face_distance <= 0.6:
-                    matching_count += 1
+                )[0]
                 valid_count += 1
             except IndexError:
                 valid_count += 1
