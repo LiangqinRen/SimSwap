@@ -1,4 +1,4 @@
-from evaluate import Utility, Effectiveness
+from evaluate import Utility, Effectiveness, Anchor
 from models.models import create_model
 from options.test_options import TestOptions
 
@@ -21,6 +21,7 @@ class Base:
 
         self.utility = Utility(args, logger)
         self.effectiveness = Effectiveness(args, logger)
+        self.anchor = Anchor(args, logger, self.effectiveness)
 
     def _load_imgs(self, imgs_path):  #  -> torch.tensor
         transformer = transforms.Compose([transforms.ToTensor()])

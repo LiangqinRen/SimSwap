@@ -36,7 +36,7 @@ class SimSwapDefense(Base, nn.Module):
         ]
 
         self.pgd_loss_weights = {"pert": 1000, "identity": 10000, "latent": 0.1}
-        self.pgd_loss_limits = {"latent": 20}
+        self.pgd_loss_limits = {"latent": 30}
 
         self.gan_rgb_limits = [0.075, 0.03, 0.075]
         self.gan_loss_weights = {
@@ -128,12 +128,11 @@ class SimSwapDefense(Base, nn.Module):
         return torch.stack(best_anchors, dim=0)
 
     def __perturb_pgd_imgs(
-        self, imgs: tensor, anchor_imgs: tensor, silent: bool = False
+        self, imgs: tensor, best_anchor_imgs: tensor, silent: bool = False
     ) -> tuple[tensor, tensor]:
         l2_loss = nn.MSELoss().cuda()
-        best_anchor_imgs = self.__find_best_anchor(imgs, anchor_imgs)
         best_anchor_identity = self._get_imgs_identity(best_anchor_imgs)
-
+        imgs_latent_code = self.target.netG.encoder(imgs)
         x_imgs = imgs.clone().detach()
         epsilon = self.args.pgd_epsilon * (torch.max(imgs) - torch.min(imgs)) / 2
         for epoch in range(self.args.epochs):
@@ -142,12 +141,11 @@ class SimSwapDefense(Base, nn.Module):
             x_identity = self._get_imgs_identity(x_imgs)
             identity_diff_loss = l2_loss(x_identity, best_anchor_identity.detach())
             x_latent_code = self.target.netG.encoder(x_imgs)
-            mimic_latent_code = self.target.netG.encoder(best_anchor_imgs)
 
             pert_diff_loss = l2_loss(x_imgs, imgs.clone().detach())
             identity_diff_loss = l2_loss(x_identity, best_anchor_identity.detach())
-            latent_code_diff_loss = torch.clamp(
-                l2_loss(x_latent_code, mimic_latent_code.detach()),
+            latent_code_diff_loss = -torch.clamp(
+                l2_loss(x_latent_code, imgs_latent_code.detach()),
                 0.0,
                 self.pgd_loss_limits["latent"],
             )
@@ -155,7 +153,7 @@ class SimSwapDefense(Base, nn.Module):
             loss = (
                 self.pgd_loss_weights["pert"] * pert_diff_loss
                 + self.pgd_loss_weights["identity"] * identity_diff_loss
-                - self.pgd_loss_weights["latent"] * latent_code_diff_loss
+                + self.pgd_loss_weights["latent"] * latent_code_diff_loss
             )
             loss.backward(retain_graph=True)
 
@@ -173,7 +171,7 @@ class SimSwapDefense(Base, nn.Module):
                     f"[Epoch {epoch+1:4}/{self.args.epochs:4}]loss: {loss:.5f}({self.pgd_loss_weights['pert'] * pert_diff_loss.item():.5f}, {self.pgd_loss_weights['identity'] * identity_diff_loss.item():.5f}, {self.pgd_loss_weights['latent'] * latent_code_diff_loss.item():.5f})"
                 )
 
-        return x_imgs, best_anchor_imgs
+        return x_imgs
 
     def __save_pgd_summary(
         self,
@@ -293,10 +291,8 @@ class SimSwapDefense(Base, nn.Module):
         self.target.cuda().eval()
 
         imgs1 = self._load_imgs(self.imgs1_path)
-        anchor_imgs_path = self.__get_anchor_imgs_path()
-        anchor_imgs = self._load_imgs(anchor_imgs_path)
-
-        x_imgs, best_anchor_imgs = self.__perturb_pgd_imgs(imgs1, anchor_imgs)
+        best_anchor_imgs = self.anchor.find_best_anchors(imgs1)
+        x_imgs = self.__perturb_pgd_imgs(imgs1, best_anchor_imgs)
 
         imgs2 = self._load_imgs(self.imgs2_path)
         imgs1_src_swap, pert_imgs1_src_swap, imgs1_tgt_swap, pert_imgs1_tgt_swap = (
@@ -476,9 +472,6 @@ class SimSwapDefense(Base, nn.Module):
             },
         }
 
-        anchor_imgs_path = self.__get_anchor_imgs_path()
-        anchor_imgs = self._load_imgs(anchor_imgs_path)
-
         total_batch = min(len(imgs1_path), len(imgs2_imgs_path)) // self.args.batch_size
         for i in range(total_batch):
             iter_imgs1_path = imgs1_path[
@@ -491,9 +484,8 @@ class SimSwapDefense(Base, nn.Module):
             imgs1 = self._load_imgs(iter_imgs1_path)
             imgs2 = self._load_imgs(iter_imgs2_path)
 
-            x_imgs, best_anchor_imgs = self.__perturb_pgd_imgs(
-                imgs1, anchor_imgs, silent=True
-            )
+            best_anchor_imgs = self.anchor.find_best_anchors(imgs1)
+            x_imgs = self.__perturb_pgd_imgs(imgs1, best_anchor_imgs, silent=True)
 
             imgs1_src_swap, pert_imgs1_src_swap, imgs1_tgt_swap, pert_imgs1_tgt_swap = (
                 self.__get_protect_both_swap_imgs(imgs1, imgs2, x_imgs)
@@ -779,9 +771,9 @@ class SimSwapDefense(Base, nn.Module):
 
         imgs1 = self._load_imgs(self.imgs1_path)
         imgs2 = self._load_imgs(self.imgs2_path)
-        anchor_imgs = self._load_imgs(anchor_imgs_path)
 
-        x_imgs, best_anchor_imgs = self.__perturb_pgd_imgs(imgs1, anchor_imgs)
+        best_anchor_imgs = self.anchor.find_best_anchors(imgs1)
+        x_imgs = self.__perturb_pgd_imgs(imgs1, best_anchor_imgs)
 
         (
             noise_source_effectivenesses,
@@ -882,9 +874,8 @@ class SimSwapDefense(Base, nn.Module):
             imgs1 = self._load_imgs(iter_imgs1_path)
             imgs2 = self._load_imgs(iter_imgs2_path)
 
-            x_imgs, best_anchor_imgs = self.__perturb_pgd_imgs(
-                imgs1, anchor_imgs, silent=True
-            )
+            best_anchor_imgs = self.anchor.find_best_anchors(imgs1)
+            x_imgs = self.__perturb_pgd_imgs(imgs1, best_anchor_imgs, silent=True)
 
             (
                 noise_source_effectivenesses,

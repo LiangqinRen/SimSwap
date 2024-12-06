@@ -1,10 +1,12 @@
 import torch
 import lpips
-import numpy as np
 import math
 import requests
 import base64
 import time
+import os
+import numpy as np
+import torchvision.transforms as transforms
 
 from facenet_pytorch import MTCNN, InceptionResnetV1
 from skimage import metrics
@@ -12,6 +14,7 @@ from torch import tensor
 import face_recognition
 from PIL import Image
 from io import BytesIO
+from os.path import join
 
 
 class Utility:
@@ -89,8 +92,8 @@ class Effectiveness:
                         )
                     )
                 )
-                img1_encoding = face_recognition.face_encodings(img1)[0]
-                img2_encoding = face_recognition.face_encodings(img2)[0]
+                img1_encoding = face_recognition.face_encodings(img1, model="large")[0]
+                img2_encoding = face_recognition.face_encodings(img2, model="large")[0]
                 face_distances = face_recognition.face_distance(
                     [img1_encoding], img2_encoding
                 )
@@ -273,3 +276,136 @@ class Effectiveness:
             )
 
         return effectivenesses
+
+
+class Anchor:
+    def __init__(self, args, logger, effectiveness):
+        self.args = args
+        self.logger = logger
+        self.effectiveness = effectiveness
+
+        self.anchorset_dir = join(args.data_dir, "anchor", args.anchor_dir)
+        self.anchor_imgs = self.__get_anchor_imgs()
+
+    def __hash_tensor(self, img: tensor):
+        return hash(tuple(img.view(-1).tolist()))
+
+    def __get_anchor_imgs_path(self) -> dict:
+        male_imgs_path = sorted(os.listdir(join(self.anchorset_dir, "male")))
+        male_imgs_path = [
+            join(self.anchorset_dir, "male", name) for name in male_imgs_path
+        ]
+
+        female_imgs_path = sorted(os.listdir(join(self.anchorset_dir, "female")))
+        female_imgs_path = [
+            join(self.anchorset_dir, "female", name) for name in female_imgs_path
+        ]
+
+        return {"male": male_imgs_path, "female": female_imgs_path}
+
+    def __load_imgs(self, imgs_path) -> dict:
+        transformer = transforms.Compose([transforms.ToTensor()])
+        imgs = [transformer(Image.open(path).convert("RGB")) for path in imgs_path]
+        imgs = torch.stack(imgs)
+
+        return imgs.cuda()
+
+    def __get_anchor_imgs(self) -> dict:
+        anchor_imgs_path = self.__get_anchor_imgs_path()
+
+        return {
+            "male": self.__load_imgs(anchor_imgs_path["male"]),
+            "female": self.__load_imgs(anchor_imgs_path["female"]),
+        }
+
+    def __check_imgs_gender_single(self, img: tensor, key: str, secret: str) -> dict:
+        result = {self.__hash_tensor(img): "fail"}
+
+        buffered = BytesIO()
+        img_image = img * 255
+        img_image = Image.fromarray(img_image.cpu().permute(1, 2, 0).byte().numpy())
+        img_image.save(buffered, format="PNG")
+        img_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
+
+        url = "https://api-us.faceplusplus.com/facepp/v3/detect"
+        payload = {
+            "api_key": key,
+            "api_secret": secret,
+            "image_base64": img_base64,
+            "return_attributes": "gender",
+        }
+
+        fail_count = 0
+        while fail_count < 10:
+            try:
+                response = requests.post(url, data=payload)
+                if response.status_code == 200:
+                    response = response.json()
+                    if len(response["faces"]) > 1:
+                        return result
+
+                    gender = response["faces"][0]["attributes"]["gender"]["value"]
+                    result[self.__hash_tensor(img)] = gender.lower()
+                elif response.status_code == 400:
+                    return result
+                elif response.status_code == 403:
+                    time.sleep(0.3)
+                    fail_count += 1
+                else:
+                    self.logger.error(response)
+            except BaseException as e:
+                self.logger.error(e)
+
+        return result
+
+    def __check_imgs_gender(self, imgs: tensor):
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor() as executor:
+            futures = [
+                executor.submit(
+                    self.__check_imgs_gender_single,
+                    imgs[i],
+                    self.args.facepp_api_key[i % len(self.args.facepp_api_key)],
+                    self.args.facepp_api_secret[i % len(self.args.facepp_api_secret)],
+                )
+                for i in range(imgs.shape[0])
+            ]
+            results = [future.result() for future in futures]
+
+        imgs_gender = {}
+        for result in results:
+            imgs_gender.update(result)
+
+        return imgs_gender
+
+    def find_best_anchors(self, imgs: tensor) -> tensor:
+        imgs_gender = self.__check_imgs_gender(imgs)
+        imgs_ndarray = imgs.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
+        best_anchors = []
+        for i in range(imgs.shape[0]):
+            candidates = (
+                self.anchor_imgs["female"]
+                if imgs_gender[self.__hash_tensor(imgs[i])] == "male"
+                else self.anchor_imgs["male"]
+            )
+            anchor_img_ndarray = (
+                candidates.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
+            )
+            distances = []
+            for j in range(candidates.shape[0]):
+                distance = self.effectiveness.get_image_distance(
+                    imgs_ndarray[i], anchor_img_ndarray[j]
+                )
+                if distance is math.nan:
+                    continue
+                distances.append((distance, j))
+
+            sorted_distances = sorted(distances)
+            if len(sorted_distances) > self.args.anchor_index:
+                best_anchor_idx = sorted_distances[self.args.anchor_index][1]
+                best_anchors.append(candidates[best_anchor_idx])
+            else:
+                best_anchors.append(candidates[0])
+
+        return torch.stack(best_anchors, dim=0)
