@@ -35,11 +35,11 @@ def get_file_and_console_logger(args):
     log_folder = "log"
     log_level = args.log_level
     log_levels = {
-        1: logging.DEBUG,
-        2: logging.INFO,
-        3: logging.WARNING,
-        4: logging.ERROR,
-        5: logging.FATAL,
+        "debug": logging.DEBUG,
+        "info": logging.INFO,
+        "warning": logging.WARNING,
+        "error": logging.ERROR,
+        "fatal": logging.FATAL,
     }
 
     formatter = logging.Formatter(
@@ -81,7 +81,7 @@ def get_file_and_console_logger(args):
 
 def get_argparser():
     parser = argparse.ArgumentParser(description="Defense Face Swap")
-    parser.add_argument("--log_level", type=int, default=2)
+    parser.add_argument("--log_level", type=str, default="info")
     parser.add_argument(
         "--console_only",
         action="store_true",

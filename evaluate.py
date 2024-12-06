@@ -5,6 +5,7 @@ import requests
 import base64
 import time
 import os
+import warnings
 import numpy as np
 import torchvision.transforms as transforms
 
@@ -18,11 +19,13 @@ from os.path import join
 
 
 class Utility:
-    lpips_distance = lpips.LPIPS(net="vgg", verbose=False).cuda()
-
     def __init__(self, args, logger):
         self.args = args
         self.logger = logger
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            self.lpips_distance = lpips.LPIPS(net="vgg", verbose=False).cuda()
 
     def calculate_utility(self, imgs1: torch.tensor, imgs2: torch.tensor):
         utilities = {"mse": [], "psnr": [], "ssim": [], "lpips": []}
