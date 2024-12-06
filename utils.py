@@ -9,6 +9,7 @@ import os
 import json
 
 import numpy as np
+from os.path import join
 
 
 class Timer:
@@ -46,24 +47,26 @@ def get_file_and_console_logger(args):
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
+    logger = logging.getLogger()
     current_time = time.strftime("%Y:%m:%d-%H:%M:%S", time.localtime(time.time()))
-    args.log_dir = f"{log_folder}/{current_time}"
+    args.log_dir = join(log_folder, current_time if not args.console_only else "null")
+
     pathlib.Path(f"{args.log_dir}").mkdir(parents=True, exist_ok=True)
     pathlib.Path(f"{args.log_dir}/image").mkdir(parents=True, exist_ok=True)
 
-    log_path = f"{log_folder}/{current_time}/{current_time}.log"
+    log_path = join(args.log_dir, f"{current_time}.log")
     handler_to_file = logging.FileHandler(log_path, mode="w")
     handler_to_file.setFormatter(formatter)
-    handler_to_console = logging.StreamHandler()
-    handler_to_console.setFormatter(formatter)
-
-    logger = logging.getLogger()
-    logger.setLevel(log_levels[log_level])
     logger.addHandler(handler_to_file)
-    logger.addHandler(handler_to_console)
 
     with open(os.path.join(args.log_dir, "notes.txt"), "w") as f:
         pass
+
+    handler_to_console = logging.StreamHandler()
+    handler_to_console.setFormatter(formatter)
+
+    logger.setLevel(log_levels[log_level])
+    logger.addHandler(handler_to_console)
 
     try:
         with open(os.path.join(args.data_dir, "facepp_keys.json")) as f:
@@ -71,15 +74,19 @@ def get_file_and_console_logger(args):
             args.facepp_api_key = data["api_key"]
             args.facepp_api_secret = data["api_secret"]
     except Exception as e:
-        logger.warning(e)
-        quit()
+        raise SystemExit("Can't find facepp_keys.json!")
 
     return logger
 
 
 def get_argparser():
-    parser = argparse.ArgumentParser(description="Thwart DeepFake!")
+    parser = argparse.ArgumentParser(description="Defense Face Swap")
     parser.add_argument("--log_level", type=int, default=2)
+    parser.add_argument(
+        "--console_only",
+        action="store_true",
+        help="Enable console-only logging mode. Logs will not be written to a file",
+    )
     parser.add_argument("--log_interval", type=int, default=100)
     parser.add_argument("--method", type=str)
     parser.add_argument("--data_dir", type=str, default="dataset")
