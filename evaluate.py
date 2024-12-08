@@ -6,6 +6,7 @@ import base64
 import time
 import os
 import warnings
+import boto3
 import numpy as np
 import torchvision.transforms as transforms
 
@@ -76,6 +77,13 @@ class Effectiveness:
         ).cuda()
         self.FaceVerification.eval()
 
+        self.aws_client = boto3.client(
+            "rekognition",
+            aws_access_key_id=self.args.aws_api_key,
+            aws_secret_access_key=self.args.aws_api_secret,
+            region_name=self.args.aws_api_region,
+        )
+
     def __get_facerec_matching(self, imgs1, imgs2):
         matching_count, valid_count = 0, 0
         for i in range(imgs1.shape[0]):
@@ -105,6 +113,46 @@ class Effectiveness:
                 valid_count += 1
             except Exception as e:
                 self.logger.warning(e)
+
+        return (matching_count, valid_count)
+
+    def __get_aws_matching(self, imgs1, imgs2) -> tuple[int, int]:
+        matching_count, valid_count = 0, 0
+        for img1, img2 in zip(imgs1, imgs2):
+            try:
+                img1 = Image.fromarray(
+                    (img1.detach().cpu().permute(1, 2, 0).numpy() * 255)
+                    .clip(0, 255)
+                    .astype(np.uint8)
+                )
+                buffer1 = BytesIO()
+                img1.save(buffer1, format="png")
+                img_bytes1 = buffer1.getvalue()
+
+                img2 = Image.fromarray(
+                    (img2.detach().cpu().permute(1, 2, 0).numpy() * 255)
+                    .clip(0, 255)
+                    .astype(np.uint8)
+                )
+                buffer2 = BytesIO()
+                img2.save(buffer2, format="png")
+                img_bytes2 = buffer2.getvalue()
+
+                response = self.aws_client.compare_faces(
+                    SimilarityThreshold=80,
+                    SourceImage={"Bytes": img_bytes1},
+                    TargetImage={"Bytes": img_bytes2},
+                )
+
+                matching_count += len(response["FaceMatches"])
+                valid_count += 1
+            except Exception as e:
+                error_code = e.response["Error"]["Code"]
+                if error_code == "InvalidParameterException":
+                    valid_count += 1
+                else:
+                    self.logger.error(e)
+                    valid_count += 1e-10
 
         return (matching_count, valid_count)
 
@@ -150,17 +198,17 @@ class Effectiveness:
     def __get_facepp_matching_single(
         self, img1: tensor, img2: tensor, key: str, secret: str
     ):
-        buffered1 = BytesIO()
+        buffer1 = BytesIO()
         img1 = img1 * 255
         img_image = Image.fromarray(img1.cpu().permute(1, 2, 0).byte().numpy())
-        img_image.save(buffered1, format="PNG")
-        img1_base64 = base64.b64encode(buffered1.getvalue()).decode("utf-8")
+        img_image.save(buffer1, format="PNG")
+        img1_base64 = base64.b64encode(buffer1.getvalue()).decode("utf-8")
 
-        buffered2 = BytesIO()
+        buffer2 = BytesIO()
         img2 = img2 * 255
         img_image = Image.fromarray(img2.cpu().permute(1, 2, 0).byte().numpy())
-        img_image.save(buffered2, format="PNG")
-        img2_base64 = base64.b64encode(buffered2.getvalue()).decode("utf-8")
+        img_image.save(buffer2, format="PNG")
+        img2_base64 = base64.b64encode(buffer2.getvalue()).decode("utf-8")
 
         url = "https://api-us.faceplusplus.com/facepp/v3/compare"
         payload = {
@@ -244,12 +292,15 @@ class Effectiveness:
         pert_swap_imgs: tensor,
         anchor_imgs: tensor,
     ) -> dict:
-        effectivenesses = {"facerec": {}, "face++": {}}
+        effectivenesses = {"facerec": {}, "face++": {}, "aws": {}}
         if pert_imgs is not None:
             effectivenesses["facerec"]["pert"] = self.__get_facerec_matching(
                 source_imgs, pert_imgs
             )
             effectivenesses["face++"]["pert"] = self.__get_facepp_matching(
+                source_imgs, pert_imgs
+            )
+            effectivenesses["aws"]["pert"] = self.__get_aws_matching(
                 source_imgs, pert_imgs
             )
 
@@ -259,11 +310,15 @@ class Effectiveness:
         effectivenesses["face++"]["swap"] = self.__get_facepp_matching(
             source_imgs, swap_imgs
         )
+        effectivenesses["aws"]["swap"] = self.__get_aws_matching(source_imgs, swap_imgs)
 
         effectivenesses["facerec"]["pert_swap"] = self.__get_facerec_matching(
             source_imgs, pert_swap_imgs
         )
         effectivenesses["face++"]["pert_swap"] = self.__get_facepp_matching(
+            source_imgs, pert_swap_imgs
+        )
+        effectivenesses["aws"]["pert_swap"] = self.__get_aws_matching(
             source_imgs, pert_swap_imgs
         )
 
@@ -272,6 +327,9 @@ class Effectiveness:
                 pert_swap_imgs, anchor_imgs
             )
             effectivenesses["face++"]["anchor"] = self.__get_facepp_matching(
+                pert_swap_imgs, anchor_imgs
+            )
+            effectivenesses["aws"]["anchor"] = self.__get_aws_matching(
                 pert_swap_imgs, anchor_imgs
             )
 

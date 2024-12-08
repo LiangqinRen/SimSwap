@@ -75,6 +75,15 @@ def get_file_and_console_logger(args):
     except Exception as e:
         raise SystemExit("Can't find facepp_keys.json!")
 
+    try:
+        with open(os.path.join(args.data_dir, "aws_keys.json")) as f:
+            data = json.load(f)
+            args.aws_api_key = data["api_key"]
+            args.aws_api_secret = data["api_secret"]
+            args.aws_api_region = data["api_region"]
+    except Exception as e:
+        raise SystemExit("Can't find aws_keys.json!")
+
     return logger
 
 
@@ -110,11 +119,20 @@ def get_argparser():
 
 
 def show_parameters(args, logger) -> None:
-    content = "Parameter configuration:\n"
+    sensitive_word_list = [
+        "facepp_api_key",
+        "facepp_api_secret",
+        "aws_api_key",
+        "aws_api_secret",
+    ]
 
+    content = "Parameter configuration:\n"
     for arg in vars(args).keys():
-        if isinstance(getattr(args, arg), list):
-            content += f"\t{arg}: {len(getattr(args, arg))}\n"
+        if arg in sensitive_word_list:
+            if isinstance(getattr(args, arg), list):
+                content += f"\t{arg}: [HIDDEN](count: {len(getattr(args, arg))})\n"
+            else:
+                content += f"\t{arg}: [HIDDEN]\n"
         else:
             content += f"\t{arg}: {getattr(args, arg)}\n"
 
