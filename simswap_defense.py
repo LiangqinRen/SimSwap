@@ -61,14 +61,14 @@ class SimSwapDefense(Base, nn.Module):
     def __generate_iter_effectiveness_log(self, effectiveness: dict) -> str:
         content = ""
         for effec in effectiveness:
-            content += f"{tuple(f'{v[0]/v[1]*100:.3f}/{v[1]}' for _,v in effectiveness[effec].items())} "
+            content += f"{tuple(f'{v[0]/v[1]*100:.3f}/{v[1]:.0f}' for _,v in effectiveness[effec].items())} "
 
         return content
 
     def __generate_summary_effectiveness_log(self, data: dict, item: str) -> str:
         content = ""
         for effec in data[item]:
-            content += f"{tuple(f'{v[0]/v[1]*100:.3f}/{v[1]}' for _,v in data[item][effec].items())} "
+            content += f"{tuple(f'{v[0]/v[1]*100:.3f}/{v[1]:.0f}' for _,v in data[item][effec].items())} "
 
         return content
 
