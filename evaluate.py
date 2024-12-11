@@ -100,10 +100,21 @@ class Effectiveness:
         return candi_funcs
 
     def __get_facenet_matching(self, imgs1, imgs2):
-        return (0, 1)
+        matching_count, valid_count = 0, 1e-10
+        distances = self.get_images_distance(imgs1, imgs2)
+        for distance in distances:
+            if distance is math.nan:
+                continue
+            else:
+                matching_count += (
+                    distance <= self.args.effectiveness["facenet"]["threshold"]
+                )
+                valid_count += 1
+
+        return (matching_count, valid_count)
 
     def __get_facerec_matching(self, imgs1, imgs2):
-        matching_count, valid_count = 0, 0
+        matching_count, valid_count = 0, 1e-10
         for i in range(imgs1.shape[0]):
             try:
                 img1, img2 = imgs1[i], imgs2[i]
@@ -135,7 +146,7 @@ class Effectiveness:
         return (matching_count, valid_count)
 
     def __get_aws_matching(self, imgs1, imgs2) -> tuple[int, int]:
-        matching_count, valid_count = 0, 0
+        matching_count, valid_count = 0, 1e-10
         for img1, img2 in zip(imgs1, imgs2):
             try:
                 img1 = Image.fromarray(
@@ -249,7 +260,7 @@ class Effectiveness:
             ]
             results = [future.result() for future in futures]
 
-        success_count, total_count = 0, 0
+        success_count, total_count = 0, 1e-10
         for result in results:
             success_count += result[0]
             total_count += result[1]
@@ -283,14 +294,26 @@ class Effectiveness:
 
         for i in range(imgs1_ndarray.shape[0]):
             try:
-                img1_cropped = self.mtcnn(imgs1_ndarray[i]).unsqueeze(0).cuda()
-                img2_cropped = self.mtcnn(imgs2_ndarray[i]).unsqueeze(0).cuda()
+                img1_cropped = self.mtcnn(imgs1_ndarray[i])
+                img2_cropped = self.mtcnn(imgs2_ndarray[i])
+                if img1_cropped is None or img2_cropped is None:
+                    distances.append(float("inf"))
+                    continue
 
-                img1_embeddings = self.FaceVerification(img1_cropped).detach().cpu()
-                img2_embeddings = self.FaceVerification(img2_cropped).detach().cpu()
+                img1_embeddings = (
+                    self.FaceVerification(img1_cropped.unsqueeze(0).cuda())
+                    .detach()
+                    .cpu()
+                )
+                img2_embeddings = (
+                    self.FaceVerification(img2_cropped.unsqueeze(0).cuda())
+                    .detach()
+                    .cpu()
+                )
 
                 distances.append((img1_embeddings - img2_embeddings).norm().item())
             except Exception as e:
+                self.logger.warning(e)
                 distances.append(math.nan)
 
         return distances
