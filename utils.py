@@ -6,6 +6,7 @@ import pathlib
 import random
 import os
 import json
+import copy
 
 import numpy as np
 from os.path import join
@@ -68,21 +69,11 @@ def get_file_and_console_logger(args):
     logger.addHandler(handler_to_console)
 
     try:
-        with open(os.path.join(args.data_dir, "facepp_keys.json")) as f:
+        with open(os.path.join(args.data_dir, "effectiveness.json")) as f:
             data = json.load(f)
-            args.facepp_api_key = data["api_key"]
-            args.facepp_api_secret = data["api_secret"]
+            args.effectiveness = data
     except Exception as e:
-        raise SystemExit("Can't find facepp_keys.json!")
-
-    try:
-        with open(os.path.join(args.data_dir, "aws_keys.json")) as f:
-            data = json.load(f)
-            args.aws_api_key = data["api_key"]
-            args.aws_api_secret = data["api_secret"]
-            args.aws_api_region = data["api_region"]
-    except Exception as e:
-        raise SystemExit("Can't find aws_keys.json!")
+        raise SystemExit("Can't find effectiveness.json!")
 
     return logger
 
@@ -119,20 +110,23 @@ def get_argparser():
 
 
 def show_parameters(args, logger) -> None:
-    sensitive_word_list = [
-        "facepp_api_key",
-        "facepp_api_secret",
-        "aws_api_key",
-        "aws_api_secret",
-    ]
+
+    sensitive_word_list = ["api_key", "api_secret"]
 
     content = "Parameter configuration:\n"
     for arg in vars(args).keys():
-        if arg in sensitive_word_list:
-            if isinstance(getattr(args, arg), list):
-                content += f"\t{arg}: [HIDDEN](count: {len(getattr(args, arg))})\n"
-            else:
-                content += f"\t{arg}: [HIDDEN]\n"
+        if arg == "effectiveness":
+            content += f"\teffectiveness:\n"
+            effectiveness = copy.deepcopy(getattr(args, arg))
+            for effec in effectiveness:
+                for k, v in effectiveness[effec].items():
+                    if k in sensitive_word_list:
+                        effectiveness[effec][k] = (
+                            f"[HIDDEN](count {len(v)})"
+                            if isinstance(v, list)
+                            else "[HIDDEN]"
+                        )
+                content += f"\t\t{effec}: {effectiveness[effec]}\n"
         else:
             content += f"\t{arg}: {getattr(args, arg)}\n"
 

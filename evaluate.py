@@ -66,10 +66,12 @@ class Effectiveness:
         self.args = args
         self.logger = logger
 
+        self.candi_funcs = self.__init_functions()
+
         self.mtcnn = MTCNN(
             image_size=160,
             device="cuda",
-            selection_method="largest",  # largest probability center_weighted_size largest_over_threshold
+            selection_method="largest",
             keep_all=False,
         )
         self.FaceVerification = InceptionResnetV1(
@@ -79,10 +81,26 @@ class Effectiveness:
 
         self.aws_client = boto3.client(
             "rekognition",
-            aws_access_key_id=self.args.aws_api_key,
-            aws_secret_access_key=self.args.aws_api_secret,
-            region_name=self.args.aws_api_region,
+            aws_access_key_id=self.args.effectiveness["aws"]["api_key"],
+            aws_secret_access_key=self.args.effectiveness["aws"]["api_secret"],
+            region_name=self.args.effectiveness["aws"]["api_region"],
         )
+
+    def __init_functions(self) -> dict:
+        candi_funcs = {
+            "facenet": self.__get_facenet_matching,
+            "facerec": self.__get_facerec_matching,
+            "face++": self.__get_facepp_matching,
+            "aws": self.__get_aws_matching,
+        }
+        for k, v in self.args.effectiveness.items():
+            if v["use"] is False:
+                del candi_funcs[k]
+
+        return candi_funcs
+
+    def __get_facenet_matching(self, imgs1, imgs2):
+        return (0, 1)
 
     def __get_facerec_matching(self, imgs1, imgs2):
         matching_count, valid_count = 0, 0
@@ -156,45 +174,6 @@ class Effectiveness:
 
         return (matching_count, valid_count)
 
-    def get_image_distance(self, img1: np.ndarray, img2: np.ndarray):
-        img1_cropped = self.mtcnn(img1)
-        img2_cropped = self.mtcnn(img2)
-
-        if img1_cropped is None or img2_cropped is None:
-            return math.nan
-
-        img1_embeddings = self.FaceVerification(img1_cropped.unsqueeze(0).cuda())
-        img2_embeddings = self.FaceVerification(img2_cropped.unsqueeze(0).cuda())
-
-        with torch.no_grad():
-            distance = (img1_embeddings - img2_embeddings).norm().item()
-
-        return distance
-
-    def get_images_distance(
-        self, imgs1: torch.tensor, imgs2: torch.tensor
-    ) -> list[float]:
-        distances = []
-        if imgs1.shape != imgs2.shape:
-            return distances
-
-        imgs1_ndarray = imgs1.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
-        imgs2_ndarray = imgs2.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
-
-        for i in range(imgs1_ndarray.shape[0]):
-            try:
-                img1_cropped = self.mtcnn(imgs1_ndarray[i]).unsqueeze(0).cuda()
-                img2_cropped = self.mtcnn(imgs2_ndarray[i]).unsqueeze(0).cuda()
-
-                img1_embeddings = self.FaceVerification(img1_cropped).detach().cpu()
-                img2_embeddings = self.FaceVerification(img2_cropped).detach().cpu()
-
-                distances.append((img1_embeddings - img2_embeddings).norm().item())
-            except Exception as e:
-                distances.append(math.nan)
-
-        return distances
-
     def __get_facepp_matching_single(
         self, img1: tensor, img2: tensor, key: str, secret: str
     ):
@@ -254,7 +233,8 @@ class Effectiveness:
     def __get_facepp_matching(self, imgs1: tensor, imgs2: tensor):
         from concurrent.futures import ThreadPoolExecutor
 
-        assert imgs1.shape == imgs2.shape
+        api_keys = self.args.effectiveness["face++"]["api_key"]
+        api_secrets = self.args.effectiveness["face++"]["api_secret"]
 
         with ThreadPoolExecutor() as executor:
             futures = [
@@ -262,8 +242,8 @@ class Effectiveness:
                     self.__get_facepp_matching_single,
                     imgs1[i],
                     imgs2[i],
-                    self.args.facepp_api_key[i % len(self.args.facepp_api_key)],
-                    self.args.facepp_api_secret[i % len(self.args.facepp_api_secret)],
+                    api_keys[i % len(api_keys)],
+                    api_secrets[i % len(api_secrets)],
                 )
                 for i in range(imgs1.shape[0])
             ]
@@ -275,6 +255,45 @@ class Effectiveness:
             total_count += result[1]
 
         return (success_count, total_count)
+
+    def get_image_distance(self, img1: np.ndarray, img2: np.ndarray):
+        img1_cropped = self.mtcnn(img1)
+        img2_cropped = self.mtcnn(img2)
+
+        if img1_cropped is None or img2_cropped is None:
+            return math.nan
+
+        img1_embeddings = self.FaceVerification(img1_cropped.unsqueeze(0).cuda())
+        img2_embeddings = self.FaceVerification(img2_cropped.unsqueeze(0).cuda())
+
+        with torch.no_grad():
+            distance = (img1_embeddings - img2_embeddings).norm().item()
+
+        return distance
+
+    def get_images_distance(
+        self, imgs1: torch.tensor, imgs2: torch.tensor
+    ) -> list[float]:
+        distances = []
+        if imgs1.shape != imgs2.shape:
+            return distances
+
+        imgs1_ndarray = imgs1.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
+        imgs2_ndarray = imgs2.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
+
+        for i in range(imgs1_ndarray.shape[0]):
+            try:
+                img1_cropped = self.mtcnn(imgs1_ndarray[i]).unsqueeze(0).cuda()
+                img2_cropped = self.mtcnn(imgs2_ndarray[i]).unsqueeze(0).cuda()
+
+                img1_embeddings = self.FaceVerification(img1_cropped).detach().cpu()
+                img2_embeddings = self.FaceVerification(img2_cropped).detach().cpu()
+
+                distances.append((img1_embeddings - img2_embeddings).norm().item())
+            except Exception as e:
+                distances.append(math.nan)
+
+        return distances
 
     def calculate_single_effectiveness(self, imgs1: tensor, imgs2: tensor) -> dict:
         effectivenesses = {}
@@ -292,46 +311,17 @@ class Effectiveness:
         pert_swap_imgs: tensor,
         anchor_imgs: tensor,
     ) -> dict:
-        effectivenesses = {"facerec": {}, "face++": {}, "aws": {}}
-        if pert_imgs is not None:
-            effectivenesses["facerec"]["pert"] = self.__get_facerec_matching(
-                source_imgs, pert_imgs
-            )
-            effectivenesses["face++"]["pert"] = self.__get_facepp_matching(
-                source_imgs, pert_imgs
-            )
-            effectivenesses["aws"]["pert"] = self.__get_aws_matching(
-                source_imgs, pert_imgs
-            )
+        effectivenesses = {}
+        for k, v in self.candi_funcs.items():
+            effectivenesses[k] = {}
+            if pert_imgs is not None:
+                effectivenesses[k]["pert"] = v(source_imgs, pert_imgs)
 
-        effectivenesses["facerec"]["swap"] = self.__get_facerec_matching(
-            source_imgs, swap_imgs
-        )
-        effectivenesses["face++"]["swap"] = self.__get_facepp_matching(
-            source_imgs, swap_imgs
-        )
-        effectivenesses["aws"]["swap"] = self.__get_aws_matching(source_imgs, swap_imgs)
+            effectivenesses[k]["swap"] = v(source_imgs, swap_imgs)
+            effectivenesses[k]["pert_swap"] = v(source_imgs, pert_swap_imgs)
 
-        effectivenesses["facerec"]["pert_swap"] = self.__get_facerec_matching(
-            source_imgs, pert_swap_imgs
-        )
-        effectivenesses["face++"]["pert_swap"] = self.__get_facepp_matching(
-            source_imgs, pert_swap_imgs
-        )
-        effectivenesses["aws"]["pert_swap"] = self.__get_aws_matching(
-            source_imgs, pert_swap_imgs
-        )
-
-        if anchor_imgs is not None:
-            effectivenesses["facerec"]["anchor"] = self.__get_facerec_matching(
-                pert_swap_imgs, anchor_imgs
-            )
-            effectivenesses["face++"]["anchor"] = self.__get_facepp_matching(
-                pert_swap_imgs, anchor_imgs
-            )
-            effectivenesses["aws"]["anchor"] = self.__get_aws_matching(
-                pert_swap_imgs, anchor_imgs
-            )
+            if anchor_imgs is not None:
+                effectivenesses[k]["anchor"] = v(pert_swap_imgs, anchor_imgs)
 
         return effectivenesses
 
@@ -419,13 +409,15 @@ class Anchor:
     def __check_imgs_gender(self, imgs: tensor):
         from concurrent.futures import ThreadPoolExecutor
 
+        api_keys = self.args.effectiveness["face++"]["api_key"]
+        api_secrets = self.args.effectiveness["face++"]["api_secret"]
         with ThreadPoolExecutor() as executor:
             futures = [
                 executor.submit(
                     self.__check_imgs_gender_single,
                     imgs[i],
-                    self.args.facepp_api_key[i % len(self.args.facepp_api_key)],
-                    self.args.facepp_api_secret[i % len(self.args.facepp_api_secret)],
+                    api_keys[i % len(api_keys)],
+                    api_secrets[i % len(api_secrets)],
                 )
                 for i in range(imgs.shape[0])
             ]

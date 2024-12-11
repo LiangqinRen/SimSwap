@@ -37,21 +37,18 @@ class Worker(common_base.Base):
     def __get_paired_images_path(
         self, all_people: list[str], version: int
     ) -> tuple[list[str], list[str]]:
-        train_set_path = join(self.args.data_dir, "train")
+        test_set_path = join(self.args.data_dir, "test")
         imgs1_path, imgs2_path = [], []
         if version == 1:
             # distance between same people's image
             for i, people in enumerate(all_people):
-                people_path = join(train_set_path, people)
-                all_image = sorted(os.listdir(people_path))
-                selected_imgs_name = random.sample(
-                    all_image, min(self.args.metric_people_image * 2, len(all_image))
-                )
+                people_path = join(test_set_path, people)
+                people_imgs = sorted(os.listdir(people_path))
 
-                if len(selected_imgs_name) % 2 == 1:
-                    selected_imgs_name.pop()
+                if len(people_imgs) % 2 == 1:
+                    people_imgs.pop()
 
-                for j, name in enumerate(selected_imgs_name):
+                for j, name in enumerate(people_imgs):
                     if j % 2 == 0:
                         imgs1_path.append(join(people_path, name))
                     else:
@@ -60,20 +57,16 @@ class Worker(common_base.Base):
         elif version == 2:
             # distance between different people's image
             for i, people in enumerate(all_people):
-                people_path = join(train_set_path, people)
-                all_image = sorted(os.listdir(people_path))
-                selected_imgs_name = random.sample(
-                    all_image, min(self.args.metric_people_image * 2, len(all_image))
-                )
+                people_path = join(test_set_path, people)
+                people_imgs = sorted(os.listdir(people_path))
 
                 if i % 2 == 0:
-                    imgs1_path.extend(
-                        [join(people_path, name) for name in selected_imgs_name]
-                    )
+                    imgs1_path.extend([join(people_path, name) for name in people_imgs])
                 else:
-                    imgs2_path.extend(
-                        [join(people_path, name) for name in selected_imgs_name]
-                    )
+                    imgs2_path.extend([join(people_path, name) for name in people_imgs])
+
+            random.shuffle(imgs1_path)
+            random.shuffle(imgs2_path)
 
         return imgs1_path, imgs2_path
 
@@ -81,8 +74,8 @@ class Worker(common_base.Base):
         self.logger.info(
             f"{inspect.currentframe().f_code.co_name} version {version}",
         )
-        train_set_path = join(self.args.data_dir, "train")
-        all_people = sorted(os.listdir(train_set_path))
+        test_set_path = join(self.args.data_dir, "test")
+        all_people = sorted(os.listdir(test_set_path))
 
         imgs1_path, imgs2_path = self.__get_paired_images_path(all_people, version)
         path_distances = []
@@ -96,8 +89,8 @@ class Worker(common_base.Base):
                 i * self.args.batch_size : (i + 1) * self.args.batch_size
             ]
 
-            imgs1 = super()._load_imgs(iter_imgs1_path)
-            imgs2 = super()._load_imgs(iter_imgs2_path)
+            imgs1 = self._load_imgs(iter_imgs1_path)
+            imgs2 = self._load_imgs(iter_imgs2_path)
 
             distances = self.effectiveness.get_images_distance(imgs1, imgs2)
             for i in range(len(distances)):
@@ -124,7 +117,7 @@ class Worker(common_base.Base):
 
 def main(args, logger):
     worker = Worker(args, logger)
-    # worker.calculate_effectiveness_distance(version=1)
+    worker.calculate_effectiveness_distance(version=1)
     worker.calculate_effectiveness_distance(version=2)
 
 
