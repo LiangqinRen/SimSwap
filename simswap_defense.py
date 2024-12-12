@@ -35,6 +35,7 @@ class SimSwapDefense(Base, nn.Module):
             join(self.samples_dir, i) for i in ["6.jpg", "6.jpg", "6.jpg"]
         ]
 
+        self.pgd_rgb_limits = {"R": 0.075, "G": 0.03, "B": 0.075}
         self.pgd_loss_weights = {"pert": 1000, "identity": 10000, "latent": 0.1}
         self.pgd_loss_limits = {"latent": 30}
 
@@ -141,6 +142,18 @@ class SimSwapDefense(Base, nn.Module):
         imgs_latent_code = self.target.netG.encoder(imgs)
         x_imgs = imgs.clone().detach()
         epsilon = self.args.pgd_epsilon * (torch.max(imgs) - torch.min(imgs)) / 2
+        limits = (
+            torch.tensor(
+                [
+                    self.pgd_rgb_limits["R"],
+                    self.pgd_rgb_limits["G"],
+                    self.pgd_rgb_limits["B"],
+                ]
+            )
+            .view(1, 3, 1, 1)
+            .cuda()
+        )
+        best_imgs, best_loss = None, float("inf")
         for epoch in range(self.args.epochs):
             x_imgs.requires_grad = True
 
@@ -148,11 +161,11 @@ class SimSwapDefense(Base, nn.Module):
             identity_diff_loss = l2_loss(x_identity, best_anchor_identity.detach())
             x_latent_code = self.target.netG.encoder(x_imgs)
 
-            pert_diff_loss = l2_loss(x_imgs, imgs.clone().detach())
+            pert_diff_loss = l2_loss(x_imgs, imgs.detach())
             identity_diff_loss = l2_loss(x_identity, best_anchor_identity.detach())
             latent_code_diff_loss = -torch.clamp(
                 l2_loss(x_latent_code, imgs_latent_code.detach()),
-                0.0,
+                0,
                 self.pgd_loss_limits["latent"],
             )
 
@@ -168,9 +181,14 @@ class SimSwapDefense(Base, nn.Module):
             )
             x_imgs = torch.clamp(
                 x_imgs,
-                min=imgs - self.args.pgd_limit,
-                max=imgs + self.args.pgd_limit,
+                min=imgs - limits,
+                max=imgs + limits,
             )
+            x_imgs = torch.clamp(x_imgs, 0, 1)
+
+            if loss < best_loss:
+                best_loss = loss
+                best_imgs = x_imgs
 
             if not silent:
                 self.logger.info(
@@ -291,7 +309,7 @@ class SimSwapDefense(Base, nn.Module):
 
     def pgd_both_sample(self) -> None:
         self.logger.info(
-            f"loss_weights: {self.pgd_loss_weights}, loss_limits: {self.pgd_loss_limits}"
+            f"loss_weights: {self.pgd_loss_weights}, loss_limits: {self.pgd_loss_limits}, RGB_limits: {self.pgd_rgb_limits}"
         )
 
         self.target.cuda().eval()
@@ -428,6 +446,9 @@ class SimSwapDefense(Base, nn.Module):
             target_imgs_path.extend(
                 [join(self.testset_dir, people, name) for name in people_imgs_name]
             )
+
+        random.shuffle(source_imgs_path)
+        random.shuffle(target_imgs_path)
 
         return source_imgs_path, target_imgs_path
 
@@ -1196,10 +1217,9 @@ class SimSwapDefense(Base, nn.Module):
             pert_imgs1_tgt_swap,
         )
 
-        adapt_effec_methods = [effec for effec in source_effectivenesses]
         self.logger.info(
             f"""
-        utility(mse, psnr, ssim, lpips), effectiveness{adapt_effec_methods} source(pert, swap, pert_swap) target(swap, pert_swap)
+        utility(mse, psnr, ssim, lpips), effectiveness{self.effectiveness.candi_funcs.keys()} source(pert, swap, pert_swap) target(swap, pert_swap)
         pert utility: {self.__generate_iter_utility_log(pert_utilities)}
         pert as swap source utility: {self.__generate_iter_utility_log(pert_as_src_swap_utilities)}
         pert as swap target utility: {self.__generate_iter_utility_log(pert_as_tgt_swap_utilities)}
@@ -1220,23 +1240,21 @@ class SimSwapDefense(Base, nn.Module):
             "pert_utility": (0, 0, 0, 0),
             "pert_as_src_swap_utility": (0, 0, 0, 0),
             "pert_as_tgt_swap_utility": (0, 0, 0, 0),
-            "pert_as_src_effectiveness": {
-                "facerec": {
-                    "pert": (0, 0),
-                    "swap": (0, 0),
-                    "pert_swap": (0, 0),
-                },
-                "face++": {
-                    "pert": (0, 0),
-                    "swap": (0, 0),
-                    "pert_swap": (0, 0),
-                },
-            },
-            "pert_as_tgt_effectiveness": {
-                "facerec": {"swap": (0, 0), "pert_swap": (0, 0)},
-                "face++": {"swap": (0, 0), "pert_swap": (0, 0)},
-            },
+            "pert_as_src_effectiveness": {},
+            "pert_as_tgt_effectiveness": {},
         }
+
+        for effec in self.effectiveness.candi_funcs.keys():
+            data["pert_as_src_effectiveness"][effec] = {
+                "pert": (0, 0),
+                "swap": (0, 0),
+                "pert_swap": (0, 0),
+                "anchor": (0, 0),
+            }
+            data["pert_as_tgt_effectiveness"][effec] = {
+                "swap": (0, 0),
+                "pert_swap": (0, 0),
+            }
 
         total_batch = min(len(imgs1_path), len(imgs2_imgs_path)) // self.args.batch_size
         for i in range(total_batch):
@@ -1284,10 +1302,9 @@ class SimSwapDefense(Base, nn.Module):
             del imgs1_src_swap, pert_imgs1_src_swap, imgs1_tgt_swap, pert_imgs1_tgt_swap
             torch.cuda.empty_cache()
 
-            adapt_effec_methods = [effec for effec in source_effectivenesses]
             self.logger.info(
                 f"""
-            utility(mse, psnr, ssim, lpips), effectiveness{adapt_effec_methods} source(pert, swap, pert_swap) target(swap, pert_swap)
+            utility(mse, psnr, ssim, lpips), effectiveness{self.effectiveness.candi_funcs.keys()} source(pert, swap, pert_swap) target(swap, pert_swap)
             pert utility: {self.__generate_iter_utility_log(pert_utilities)}
             pert as swap source utility: {self.__generate_iter_utility_log(pert_as_src_swap_utilities)}
             pert as swap target utility: {self.__generate_iter_utility_log(pert_as_tgt_swap_utilities)}

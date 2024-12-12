@@ -93,14 +93,11 @@ def get_argparser():
     parser.add_argument("--anchor_index", type=int, default=0)
     parser.add_argument("--random_seed", type=int, default=0)
 
-    parser.add_argument("--metric_people_image", type=int, default=5)
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--testset_percentage", type=int, default=10)
 
     parser.add_argument("--pgd_epsilon", type=float, default=1e-2)
-    parser.add_argument("--pgd_limit", type=float, default=5e-2)
-
     parser.add_argument("--gan_generator_lr", type=float, default=5e-4)
     parser.add_argument("--gan_test_models", type=str)
 
