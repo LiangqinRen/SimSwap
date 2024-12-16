@@ -74,8 +74,6 @@ class SimSwapDefense(Base, nn.Module):
         return content
 
     def __generate_iter_robustness_log(self, source: dict, target: dict) -> str:
-        print(source, target)
-        quit()
         return f"""
         {tuple(f'{v[0]/v[1]*100:.3f}/{v[1]}' for _,v in source['facerec'].items())}, {tuple(f'{v[0]/v[1]*100:.3f}/{v[1]}' for _,v in source['face++'].items())}, {tuple(f'{v[0]/v[1]*100:.3f}/{v[1]}' for _,v in target['facerec'].items())}, {tuple(f'{v[0]/v[1]*100:.3f}/{v[1]}' for _,v in target['face++'].items())}
         """.strip()
@@ -1459,42 +1457,30 @@ class SimSwapDefense(Base, nn.Module):
             """
             )
 
-    def __calculate_anchor_distance(
-        self, imgs: tensor, anchor_imgs: tensor
-    ) -> tuple[float, float]:
+    def __calculate_anchor_distance(self, imgs: tensor) -> tuple[float, float]:
+        best_anchor_imgs = self.anchor.find_best_anchors(imgs)
+
         imgs_ndarray = imgs.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
         anchor_img_ndarray = (
-            anchor_imgs.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
+            best_anchor_imgs.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
         )
 
-        count, min_dist, avg_dist = 0, 0, 0
         for i in range(imgs.shape[0]):
             distances = []
-            for j in range(anchor_imgs.shape[0]):
-                distance = self.effectiveness.get_image_distance(
-                    imgs_ndarray[i], anchor_img_ndarray[j]
-                )
-                if distance is math.nan:
-                    continue
-                distances.append((distance, j))
-
-            sorted_distances = sorted(distances)
-            if len(sorted_distances) == 0:
+            distance = self.effectiveness.get_image_distance(
+                imgs_ndarray[i], anchor_img_ndarray[i]
+            )
+            if distance is math.nan:
                 continue
-            else:
-                count += 1
-                min_dist += sorted_distances[0][0]
-                avg_dist += sorted_distances[int(len(sorted_distances) / 2)][0]
+            distances.append(distance)
 
-        return min_dist / count, avg_dist / count
+        return sum(distances) / len(distances)
 
     def calculate_distance(self):
-        anchor_imgs_path = self.__get_anchor_imgs_path()
-        anchor_imgs = self._load_imgs(anchor_imgs_path)
-        min_distance, avg_distance = 0, 0
+        min_distance = 0
 
-        imgs1_path, imgs2_imgs_path = self._get_split_test_imgs_path()
-        total_batch = min(len(imgs1_path), len(imgs2_imgs_path)) // self.args.batch_size
+        imgs1_path, _ = self._get_split_test_imgs_path()
+        total_batch = len(imgs1_path) // self.args.batch_size
 
         import tqdm
 
@@ -1503,15 +1489,12 @@ class SimSwapDefense(Base, nn.Module):
                 i * self.args.batch_size : (i + 1) * self.args.batch_size
             ]
             imgs1 = self._load_imgs(iter_imgs1_path)
-            distance = self.__calculate_anchor_distance(imgs1, anchor_imgs)
+            distance = self.__calculate_anchor_distance(imgs1)
             if distance is not None:
-                min_distance += distance[0]
-                avg_distance += distance[1]
-                tqdm.tqdm.write(f"min/avg distance {distance[0]}, {distance[1]}")
+                min_distance += distance
+                tqdm.tqdm.write(f"min distance {distance}")
 
-        self.logger.info(
-            f"min and avg distance: {min_distance/total_batch:.5f}, {avg_distance/total_batch:.5f}"
-        )
+        self.logger.info(f"min distance: {min_distance/total_batch:.5f}")
 
     def check_different_identity_effectiveness(self):
         anchor_imgs_path = self.__get_anchor_imgs_path()
