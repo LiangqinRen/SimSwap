@@ -1457,16 +1457,20 @@ class SimSwapDefense(Base, nn.Module):
             """
             )
 
-    def __calculate_anchor_distance(self, imgs: tensor) -> tuple[float, float]:
+    def __calculate_anchor_distance(self, imgs: tensor, effectivenesses) -> list[float]:
         best_anchor_imgs = self.anchor.find_best_anchors(imgs)
 
+        result = self.effectiveness.calculate_single_effectiveness(
+            imgs, best_anchor_imgs
+        )
+        self.__merge_dict(effectivenesses, result)
         imgs_ndarray = imgs.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
         anchor_img_ndarray = (
             best_anchor_imgs.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
         )
 
+        distances = []
         for i in range(imgs.shape[0]):
-            distances = []
             distance = self.effectiveness.get_image_distance(
                 imgs_ndarray[i], anchor_img_ndarray[i]
             )
@@ -1474,11 +1478,14 @@ class SimSwapDefense(Base, nn.Module):
                 continue
             distances.append(distance)
 
-        return sum(distances) / len(distances)
+        return distances
 
     def calculate_distance(self):
-        min_distance = 0
-
+        sum_distances = []
+        effectivenesses = {
+            "facenet": (0, 0),
+            "face++": (0, 0),
+        }
         imgs1_path, _ = self._get_split_test_imgs_path()
         total_batch = len(imgs1_path) // self.args.batch_size
 
@@ -1489,12 +1496,17 @@ class SimSwapDefense(Base, nn.Module):
                 i * self.args.batch_size : (i + 1) * self.args.batch_size
             ]
             imgs1 = self._load_imgs(iter_imgs1_path)
-            distance = self.__calculate_anchor_distance(imgs1)
-            if distance is not None:
-                min_distance += distance
-                tqdm.tqdm.write(f"min distance {distance}")
+            distances = self.__calculate_anchor_distance(imgs1, effectivenesses)
+            sum_distances.extend(distances)
+            tqdm.tqdm.write(f"min distance {sum(distances)/len(distances):.5f}")
 
-        self.logger.info(f"min distance: {min_distance/total_batch:.5f}")
+            with open(join(self.args.log_dir, "anchor_distances.txt"), "a") as f:
+                for dist in distances:
+                    f.write(f"{dist}\n")
+            tqdm.tqdm.write(str(effectivenesses))
+
+        self.logger.info(effectivenesses)
+        self.logger.info(f"min distance: {sum(sum_distances)/len(sum_distances):.5f}")
 
     def check_different_identity_effectiveness(self):
         anchor_imgs_path = self.__get_anchor_imgs_path()
