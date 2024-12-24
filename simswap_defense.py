@@ -1457,22 +1457,14 @@ class SimSwapDefense(Base, nn.Module):
             """
             )
 
-    def __calculate_anchor_distance(self, imgs: tensor, effectivenesses) -> list[float]:
-        best_anchor_imgs = self.anchor.find_best_anchors(imgs)
-
-        result = self.effectiveness.calculate_single_effectiveness(
-            imgs, best_anchor_imgs
-        )
-        self.__merge_dict(effectivenesses, result)
+    def __calculate_anchor_distance(self, imgs: tensor, anchors: tensor) -> list[float]:
         imgs_ndarray = imgs.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
-        anchor_img_ndarray = (
-            best_anchor_imgs.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
-        )
+        anchors_ndarray = anchors.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
 
         distances = []
         for i in range(imgs.shape[0]):
             distance = self.effectiveness.get_image_distance(
-                imgs_ndarray[i], anchor_img_ndarray[i]
+                imgs_ndarray[i], anchors_ndarray[i]
             )
             if distance is math.nan:
                 continue
@@ -1480,59 +1472,36 @@ class SimSwapDefense(Base, nn.Module):
 
         return distances
 
-    def calculate_distance(self):
-        sum_distances = []
-        effectivenesses = {
-            "facenet": (0, 0),
-            "face++": (0, 0),
-        }
+    def check_img_anchor_difference(self) -> None:
         imgs1_path, _ = self._get_split_test_imgs_path()
         total_batch = len(imgs1_path) // self.args.batch_size
 
-        import tqdm
+        accumulate_distances = []
+        accumulate_matching_count, accumulate_valid_count = 0, 0
 
-        for i in tqdm.tqdm(range(total_batch)):
+        for batch in range(1, total_batch + 1):
             iter_imgs1_path = imgs1_path[
-                i * self.args.batch_size : (i + 1) * self.args.batch_size
+                (batch - 1) * self.args.batch_size : batch * self.args.batch_size
             ]
             imgs1 = self._load_imgs(iter_imgs1_path)
-            distances = self.__calculate_anchor_distance(imgs1, effectivenesses)
-            sum_distances.extend(distances)
-            tqdm.tqdm.write(f"min distance {sum(distances)/len(distances):.5f}")
+            anchors = self.anchor.find_best_anchors(imgs1)
+
+            distances = self.__calculate_anchor_distance(imgs1, anchors)
+            matching_count, valid_count = (
+                self.effectiveness.calculate_single_effectiveness(imgs1, anchors)
+            )
 
             with open(join(self.args.log_dir, "anchor_distances.txt"), "a") as f:
                 for dist in distances:
                     f.write(f"{dist}\n")
-            tqdm.tqdm.write(str(effectivenesses))
 
-        self.logger.info(effectivenesses)
-        self.logger.info(f"min distance: {sum(sum_distances)/len(sum_distances):.5f}")
+            accumulate_distances.extend(distances)
+            accumulate_matching_count += matching_count
+            accumulate_valid_count += valid_count
 
-    def check_different_identity_effectiveness(self):
-        anchor_imgs_path = self.__get_anchor_imgs_path()
-        anchor_imgs = self._load_imgs(anchor_imgs_path)
-
-        imgs1_path, imgs2_imgs_path = self._get_split_test_imgs_path()
-        total_batch = min(len(imgs1_path), len(imgs2_imgs_path)) // self.args.batch_size
-
-        import tqdm
-
-        effectivenesses = {
-            "facerec": (0, 0),
-            "face++": (0, 0),
-        }
-        for i in tqdm.tqdm(range(total_batch)):
-            iter_imgs1_path = imgs1_path[
-                i * self.args.batch_size : (i + 1) * self.args.batch_size
-            ]
-            imgs1 = self._load_imgs(iter_imgs1_path)
-            anchors = self.__find_best_anchor(imgs1, anchor_imgs)
-            result = self.effectiveness.calculate_single_effectiveness(imgs1, anchors)
-            self.__merge_dict(effectivenesses, result)
-            tqdm.tqdm.write(
-                f"Face Recognition/Face++: {result['facerec'][0]/result['facerec'][1]*100:.3f}/{result['facerec'][1]}, {result['face++'][0]/result['face++'][1]*100:.3f}/{result['face++'][1]}"
+            self.logger.info(
+                f"min, max, avg distances are {min(distances):.3f}, {max(distances):.3f}, {sum(distances)/len(distances):.3f}, the facenet, face++ effectiveness are {sum([1 if dist <= self.args.effectiveness['facenet']['threshold'] else 0 for dist in distances])/len(distances)*100:.3f}, {matching_count/valid_count*100:.3f}"
             )
-
-        self.logger.info(
-            f"Face Recognition/Face++: {effectivenesses['facerec'][0]/effectivenesses['facerec'][1]*100:.3f}/{effectivenesses['facerec'][1]}, {effectivenesses['face++'][0]/effectivenesses['face++'][1]*100:.3f}/{effectivenesses['face++'][1]}"
-        )
+            self.logger.info(
+                f"[{batch}/{total_batch}]Average of {self.args.batch_size * (batch)} pictures, min, max, avg distances are {min(accumulate_distances):.3f}, {max(accumulate_distances):.3f}, {sum(accumulate_distances)/len(accumulate_distances):.3f}, the facenet, face++ effectiveness are {sum([1 if dist <= self.args.effectiveness['facenet']['threshold'] else 0 for dist in accumulate_distances])/len(accumulate_distances)*100:.3f}, {accumulate_matching_count/accumulate_valid_count*100:.3f}"
+            )

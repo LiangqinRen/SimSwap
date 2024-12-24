@@ -319,11 +319,7 @@ class Effectiveness:
         return distances
 
     def calculate_single_effectiveness(self, imgs1: tensor, imgs2: tensor) -> dict:
-        effectivenesses = {}
-        for k, v in self.candi_funcs.items():
-            effectivenesses[k] = v(imgs1, imgs2)
-
-        return effectivenesses
+        return self.__get_facepp_matching(imgs1, imgs2)
 
     def calculate_effectiveness(
         self,

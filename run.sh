@@ -25,15 +25,12 @@ then
 elif [[ $mode == 'worker' ]]
 then
     python main.py $console_only --method $mode --batch_size 64
-elif [[ $mode == 'distance' ]]
+elif [[ $mode == 'anchor_difference' ]]
 then
     python main.py $console_only --method $mode --batch_size 64
 elif [[ $mode == 'robustness' ]]
 then
     python main.py $console_only --method $mode --batch_size 14 
-elif [[ $mode == 'diff_identity_match' ]]
-then
-    python main.py $console_only --method $mode --batch_size 14 --anchor_dir "fake" 
 else
     echo "Unrecognized mode!"
 fi
