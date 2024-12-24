@@ -371,7 +371,11 @@ class Anchor:
             join(self.anchorset_dir, "female", name) for name in female_imgs_path
         ]
 
-        return {"male": male_imgs_path, "female": female_imgs_path}
+        return {
+            "male": male_imgs_path,
+            "female": female_imgs_path,
+            "mix": male_imgs_path + female_imgs_path,
+        }
 
     def __load_imgs(self, imgs_path) -> dict:
         transformer = transforms.Compose([transforms.ToTensor()])
@@ -386,6 +390,7 @@ class Anchor:
         return {
             "male": self.__load_imgs(anchor_imgs_path["male"]),
             "female": self.__load_imgs(anchor_imgs_path["female"]),
+            "mix": self.__load_imgs(anchor_imgs_path["mix"]),
         }
 
     def __check_imgs_gender_single(self, img: tensor, key: str, secret: str) -> dict:
@@ -452,15 +457,21 @@ class Anchor:
         return imgs_gender
 
     def find_best_anchors(self, imgs: tensor) -> tensor:
-        imgs_gender = self.__check_imgs_gender(imgs)
+        if not self.args.anchor_mix:
+            imgs_gender = self.__check_imgs_gender(imgs)
+
         imgs_ndarray = imgs.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
         best_anchors = []
         for i in range(imgs.shape[0]):
-            candidates = (
-                self.anchor_imgs["female"]
-                if imgs_gender[self.__hash_tensor(imgs[i])] == "male"
-                else self.anchor_imgs["male"]
-            )
+            if self.args.anchor_mix:
+                candidates = self.anchor_imgs["mix"]
+            else:
+                candidates = (
+                    self.anchor_imgs["female"]
+                    if imgs_gender[self.__hash_tensor(imgs[i])] == "male"
+                    else self.anchor_imgs["male"]
+                )
+
             anchor_img_ndarray = (
                 candidates.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
             )

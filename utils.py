@@ -91,6 +91,7 @@ def get_argparser():
     parser.add_argument("--data_dir", type=str, default="dataset")
     parser.add_argument("--anchor_dir", type=str, default="real")
     parser.add_argument("--anchor_index", type=int, default=0)
+    parser.add_argument("--anchor_mix", action="store_true")
     parser.add_argument("--random_seed", type=int, default=0)
 
     parser.add_argument("--batch_size", type=int, default=16)
