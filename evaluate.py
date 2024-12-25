@@ -476,7 +476,7 @@ class Anchor:
                 distance = self.effectiveness.get_image_distance(
                     imgs_ndarray[i], anchor_img_ndarray[j]
                 )
-                if distance is math.nan:
+                if distance is math.nan or distance <= self.args.anchor_min_distance:
                     continue
                 distances.append((distance, j))
 

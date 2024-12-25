@@ -89,10 +89,12 @@ def get_argparser():
     parser.add_argument("--log_interval", type=int, default=100)
     parser.add_argument("--method", type=str)
     parser.add_argument("--data_dir", type=str, default="dataset")
+    parser.add_argument("--random_seed", type=int, default=0)
+
     parser.add_argument("--anchor_dir", type=str, default="real")
     parser.add_argument("--anchor_index", type=int, default=0)
     parser.add_argument("--anchor_mix", action="store_true")
-    parser.add_argument("--random_seed", type=int, default=0)
+    parser.add_argument("--anchor_min_distance", type=float, default=1.04)
 
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--epochs", type=int, default=100)
