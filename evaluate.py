@@ -7,9 +7,11 @@ import time
 import os
 import warnings
 import boto3
+import random
 import numpy as np
 import torchvision.transforms as transforms
 
+from concurrent.futures import ThreadPoolExecutor
 from facenet_pytorch import MTCNN, InceptionResnetV1
 from skimage import metrics
 from torch import tensor
@@ -242,7 +244,6 @@ class Effectiveness:
         return (0, 1e-10)
 
     def __get_facepp_matching(self, imgs1: tensor, imgs2: tensor):
-        from concurrent.futures import ThreadPoolExecutor
 
         api_keys = self.args.effectiveness["face++"]["api_key"]
         api_secrets = self.args.effectiveness["face++"]["api_secret"]
@@ -266,6 +267,29 @@ class Effectiveness:
             total_count += result[1]
 
         return (success_count, total_count)
+
+    def is_same_identity_via_facepp(self, imgs1: tensor, imgs2: tensor) -> list[bool]:
+        api_keys = self.args.effectiveness["face++"]["api_key"]
+        api_secrets = self.args.effectiveness["face++"]["api_secret"]
+
+        with ThreadPoolExecutor() as executor:
+            futures = [
+                executor.submit(
+                    self.__get_facepp_matching_single,
+                    imgs1[i],
+                    imgs2[i],
+                    api_keys[i % len(api_keys)],
+                    api_secrets[i % len(api_secrets)],
+                )
+                for i in range(imgs1.shape[0])
+            ]
+            matchings = [future.result() for future in futures]
+
+        results = []
+        for matching in matchings:
+            results.append(matching[0] == 1)
+
+        return results
 
     def get_image_distance(self, img1: np.ndarray, img2: np.ndarray):
         img1_cropped = self.mtcnn(img1)
@@ -370,7 +394,7 @@ class Anchor:
         return {
             "male": male_imgs_path,
             "female": female_imgs_path,
-            "mix": male_imgs_path + female_imgs_path,
+            "mix": male_imgs_path[:15] + female_imgs_path[:15],
         }
 
     def __load_imgs(self, imgs_path) -> dict:
@@ -468,6 +492,13 @@ class Anchor:
                     else self.anchor_imgs["male"]
                 )
 
+            # img_to_match = imgs[i].unsqueeze(0)
+            # img_to_match = img_to_match.repeat(candidates.shape[0], 1, 1, 1)
+            # same_identity = self.effectiveness.is_same_identity_via_facepp(
+            #     img_to_match, candidates
+            # )
+            same_identity = [False] * candidates.shape[0]
+
             anchor_img_ndarray = (
                 candidates.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
             )
@@ -476,7 +507,11 @@ class Anchor:
                 distance = self.effectiveness.get_image_distance(
                     imgs_ndarray[i], anchor_img_ndarray[j]
                 )
-                if distance is math.nan or distance <= self.args.anchor_min_distance:
+                if (
+                    distance is math.nan
+                    or distance <= self.args.anchor_min_distance
+                    or same_identity[j]
+                ):
                     continue
                 distances.append((distance, j))
 
@@ -485,6 +520,6 @@ class Anchor:
                 best_anchor_idx = sorted_distances[self.args.anchor_index][1]
                 best_anchors.append(candidates[best_anchor_idx])
             else:
-                best_anchors.append(candidates[0])
+                best_anchors.append(candidates[-1])
 
         return torch.stack(best_anchors, dim=0)
