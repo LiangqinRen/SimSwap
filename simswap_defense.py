@@ -480,6 +480,8 @@ class SimSwapDefense(Base, nn.Module):
                 "pert_swap": (0, 0),
             }
 
+        accumulate_anchor_distance = []
+        accumulate_pert_swap_distance = []
         total_batch = min(len(imgs1_path), len(imgs2_imgs_path)) // self.args.batch_size
         for i in range(total_batch):
             iter_imgs1_path = imgs1_path[
@@ -525,6 +527,21 @@ class SimSwapDefense(Base, nn.Module):
                 target_effectivenesses,
             )
 
+            anchor_distance = self.effectiveness.get_images_distance(
+                imgs1, best_anchor_imgs
+            )
+            pert_swap_distance = self.effectiveness.get_images_distance(
+                imgs1, pert_imgs1_src_swap
+            )
+            with open(join(self.args.log_dir, "anchor_distances.txt"), "a") as f:
+                for dist in anchor_distance:
+                    f.write(f"{dist}\n")
+            with open(join(self.args.log_dir, "pert_swap_distances.txt"), "a") as f:
+                for dist in pert_swap_distance:
+                    f.write(f"{dist}\n")
+            accumulate_anchor_distance.extend(anchor_distance)
+            accumulate_pert_swap_distance.extend(pert_swap_distance)
+
             del imgs1, imgs2, x_imgs, best_anchor_imgs
             del imgs1_src_swap, pert_imgs1_src_swap, imgs1_tgt_swap, pert_imgs1_tgt_swap
             torch.cuda.empty_cache()
@@ -532,6 +549,8 @@ class SimSwapDefense(Base, nn.Module):
             self.logger.info(
                 f"""
             utility(mse, psnr, ssim, lpips), effectiveness{self.effectiveness.candi_funcs.keys()} source(pert, swap, pert_swap, anchor) target(swap, pert_swap)
+            anchor distances: {sum(anchor_distance)/len(anchor_distance):.3f}
+            pert swap distances: {sum(pert_swap_distance)/len(pert_swap_distance):.3f}
             pert utility: {self.__generate_iter_utility_log(pert_utilities)}
             pert as swap source utility: {self.__generate_iter_utility_log(pert_as_src_swap_utilities)}
             pert as swap target utility: {self.__generate_iter_utility_log(pert_as_tgt_swap_utilities)}
@@ -543,6 +562,8 @@ class SimSwapDefense(Base, nn.Module):
             self.logger.info(
                 f"""
             Batch {i + 1:4}/{total_batch:4}, {self.args.batch_size * (i + 1)} pairs of pictures
+            {sum(accumulate_anchor_distance)/len(accumulate_anchor_distance):.3f}
+            {sum(accumulate_pert_swap_distance)/len(accumulate_pert_swap_distance):.3f}
             {self.__generate_summary_utility_log(data, 'pert_utility', i)}
             {self.__generate_summary_utility_log(data, 'pert_as_src_swap_utility', i)}
             {self.__generate_summary_utility_log(data, 'pert_as_tgt_swap_utility', i)}
