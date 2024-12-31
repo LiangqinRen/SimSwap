@@ -1,5 +1,4 @@
 import simswap_defense
-from miscellaneous import Worker
 import utils
 
 import inspect
@@ -30,10 +29,6 @@ def main():
 
     if args.method in defense_functions:
         defense_functions[args.method]()
-    elif args.method == "worker":
-        from miscellaneous import main
-
-        main(args, logger)
     elif args.method == "robustness":
         from robustness import main
 

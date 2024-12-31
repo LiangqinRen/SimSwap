@@ -22,9 +22,6 @@ then
 elif [[ $mode == 'gan_both_metric' ]] || [[ $mode == 'gan_both_robustness_metric' ]]
 then
     python main.py $console_only --method $mode --gan_test_models "gan_both.pth" --batch_size 12
-elif [[ $mode == 'worker' ]]
-then
-    python main.py $console_only --method $mode --batch_size 64
 elif [[ $mode == 'anchor_difference' ]]
 then
     python main.py $console_only --method $mode --batch_size 64
