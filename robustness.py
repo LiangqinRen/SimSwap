@@ -103,50 +103,37 @@ class Robustness(Base, nn.Module):
 
     def artificial_gan_fingerprints_swap(self):
         fingerprints_path = sorted(
-            os.listdir(join(self.args.data_dir, "fingerprinted_test1"))
+            os.listdir(join(self.args.data_dir, "fingerprinted_images"))
         )
         fingerprints_path = [
-            join(self.args.data_dir, "fingerprinted_test1", i)
+            join(self.args.data_dir, "fingerprinted_images", i)
             for i in fingerprints_path
         ]
-        imgs2_path = sorted(os.listdir(join(self.args.data_dir, "test2")))
-        imgs2_path = [join(self.args.data_dir, "test2", i) for i in imgs2_path]
 
-        total_batch = (
-            min(len(fingerprints_path), len(imgs2_path)) // self.args.batch_size
-        )
+        total_batch = len(fingerprints_path) // self.args.batch_size
         os.makedirs(join(self.args.log_dir, "image", "noise"), exist_ok=True)
         os.makedirs(join(self.args.log_dir, "image", "compress"), exist_ok=True)
         os.makedirs(join(self.args.log_dir, "image", "rotate"), exist_ok=True)
+        os.makedirs(join(self.args.log_dir, "image", "crop"), exist_ok=True)
+        os.makedirs(join(self.args.log_dir, "image", "cover"), exist_ok=True)
         for i in tqdm(range(total_batch)):
             iter_imgs1_path = fingerprints_path[
                 i * self.args.batch_size : (i + 1) * self.args.batch_size
             ]
-            iter_imgs2_path = imgs2_path[
-                i * self.args.batch_size : (i + 1) * self.args.batch_size
-            ]
 
             imgs1 = self._load_imgs(iter_imgs1_path)
-            imgs2 = self._load_imgs(iter_imgs1_path)
-            imgs2_identity = self._get_imgs_identity(imgs2)
 
             noise_imgs1 = self.__gauss_noise(imgs1, 0, 0.1)
-            noise_imgs1 = self.target(None, noise_imgs1, imgs2_identity, None, True)
             compress_imgs1 = self.__jpeg_compress(imgs1, 85)
-            compress_imgs1 = self.target(
-                None, compress_imgs1, imgs2_identity, None, True
-            )
             rotate_imgs1 = self.__rotate(imgs1, 60)
-            rotate_imgs1 = self.target(None, rotate_imgs1, imgs2_identity, None, True)
-            crop_imgs1 = self.__crop(imgs1, 60)
-            crop_imgs1 = self.target(None, crop_imgs1, imgs2_identity, None, True)
+            crop_imgs1 = self.__crop(imgs1, 90)
+            cover_imgs1 = self.__cover(imgs1)
 
             for j in range(noise_imgs1.shape[0]):
                 save_image(
                     noise_imgs1[j],
                     join(self.args.log_dir, "image", "noise", f"{i}_{j}.png"),
                 )
-
             for j in range(compress_imgs1.shape[0]):
                 save_image(
                     compress_imgs1[j],
@@ -156,6 +143,16 @@ class Robustness(Base, nn.Module):
                 save_image(
                     rotate_imgs1[j],
                     join(self.args.log_dir, "image", "rotate", f"{i}_{j}.png"),
+                )
+            for j in range(crop_imgs1.shape[0]):
+                save_image(
+                    crop_imgs1[j],
+                    join(self.args.log_dir, "image", "crop", f"{i}_{j}.png"),
+                )
+            for j in range(cover_imgs1.shape[0]):
+                save_image(
+                    cover_imgs1[j],
+                    join(self.args.log_dir, "image", "cover", f"{i}_{j}.png"),
                 )
 
     def sepmark(self, img1: tensor) -> dict:
@@ -223,4 +220,4 @@ class Robustness(Base, nn.Module):
 
 def main(args, logger):
     robustness = Robustness(args, logger)
-    robustness.sepmark()
+    robustness.artificial_gan_fingerprints_swap()

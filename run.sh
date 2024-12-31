@@ -18,7 +18,7 @@ then
     python main.py $console_only --method $mode --batch_size 7 --log_interval 250 --epochs 500000
 elif [[ $mode == 'gan_both_sample' ]] || [[ $mode == 'gan_both_robustness_sample' ]]
 then
-    python main.py $console_only --method $mode --gan_test_models "gan_both.pth" 
+    python main.py $console_only --method $mode --gan_test_models "gan_both.pth"
 elif [[ $mode == 'gan_both_metric' ]] || [[ $mode == 'gan_both_robustness_metric' ]]
 then
     python main.py $console_only --method $mode --gan_test_models "gan_both.pth" --batch_size 12
@@ -30,7 +30,7 @@ then
     python main.py $console_only --method $mode --batch_size 64
 elif [[ $mode == 'robustness' ]]
 then
-    python main.py $console_only --method $mode --batch_size 14 
+    python main.py $console_only --method $mode --batch_size 128
 else
     echo "Unrecognized mode!"
 fi
