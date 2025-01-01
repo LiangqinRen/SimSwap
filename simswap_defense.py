@@ -1,22 +1,21 @@
 from common_base import Base
 
 import os
+import io
 import random
-import cv2
 import torch
 import math
 
-import numpy as np
 import torch.nn as nn
 import torch.optim as optim
-import torch.nn.functional as F
 
 
 from os.path import join
 from torchvision.utils import save_image
 from models.fs_networks import Generator
 from torch import tensor
-from torchvision.transforms import InterpolationMode
+from torchvision.transforms import ToPILImage, ToTensor
+from PIL import Image
 
 
 class SimSwapDefense(Base, nn.Module):
@@ -108,11 +107,10 @@ class SimSwapDefense(Base, nn.Module):
 
         return imgs1_src_swap, pert_imgs1_src_swap, imgs1_tgt_swap, pert_imgs1_tgt_swap
 
-    def __get_anchor_imgs_path(self) -> list[str]:
-        all_imgs_path = sorted(os.listdir(self.anchorset_dir))
-        all_imgs_path = [join(self.anchorset_dir, name) for name in all_imgs_path]
-
-        return all_imgs_path
+    def __load_logo(self) -> tensor:
+        logo_path = join(self.samples_dir, "ccs.png")
+        logo = self._load_imgs([logo_path])
+        return logo
 
     def __perturb_pgd_imgs(
         self, imgs: tensor, best_anchor_imgs: tensor, silent: bool = False
@@ -562,72 +560,64 @@ class SimSwapDefense(Base, nn.Module):
 
         return noise_pert
 
-    def __jpeg_compress(self, imgs: tensor, ratio: int) -> tensor:
-        import torchvision.io as io
+    def __webp_compress(self, imgs, quality):
+        compressed_tensors = []
 
-        # pert_ndarray = pert.detach().cpu().numpy().transpose(0, 2, 3, 1)
-        # pert_ndarray = np.clip(pert_ndarray * 255.0, 0, 255).astype("uint8")
-        # encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), int(ratio)]
-        # for i in range(pert_ndarray.shape[0]):
-        #     _, encimg = cv2.imencode(".jpg", pert_ndarray[i], encode_params)
-        #     pert_ndarray[i] = cv2.imdecode(encimg, 1)
+        for i in range(imgs.size(0)):
+            single_image_tensor = imgs[i]
 
-        # compress_pert = pert_ndarray.transpose((0, 3, 1, 2))
-        # compress_pert = torch.from_numpy(compress_pert / 255.0).float().cuda()
+            pil_image = ToPILImage()(single_image_tensor)
 
-        # return compress_pert
-        # imgs = [transformer(Image.open(path).convert("RGB")) for path in imgs_path]
-        # imgs = torch.stack(imgs)
-        compressed_imgs = []
-        for img in imgs:
-            compressed_bytes = io.encode_jpeg(
-                torch.clip(img * 255, 0, 255).to(torch.uint8).cpu(), quality=ratio
-            )
-            decode_img = io.decode_jpeg(compressed_bytes)
-            compressed_imgs.append(decode_img.float().cuda() / 255.0)
+            buffer = io.BytesIO()
+            pil_image.save(buffer, format="WEBP", quality=quality)
+            buffer.seek(0)
 
-        return torch.stack(compressed_imgs)
+            compressed_image = Image.open(buffer)
+            compressed_tensor = ToTensor()(compressed_image)
 
-    def __rotate(self, imgs: tensor, angle: float) -> None:
-        import torchvision.transforms.functional as F
+            compressed_tensors.append(compressed_tensor)
 
-        rotated_imgs = torch.stack(
-            [
-                F.rotate(tensor, angle, interpolation=InterpolationMode.BILINEAR)
-                for tensor in imgs
+        return torch.stack(compressed_tensors).cuda()
+
+    def __crop(self, imgs: tensor, thickness: float) -> tensor:
+        crop_imgs = imgs.clone()
+        crop_imgs[:, :, :thickness, :] = 0
+        crop_imgs[:, :, -thickness:, :] = 0
+        crop_imgs[:, :, :, :thickness] = 0
+        crop_imgs[:, :, :, -thickness:] = 0
+
+        return crop_imgs
+
+    def __brightness(self, imgs, brightness_factor: float):
+        adjusted_tensor = imgs * brightness_factor
+        adjusted_tensor = torch.clamp(adjusted_tensor, 0, 1)
+
+        return adjusted_tensor
+
+    def __logo(self, imgs: tensor, logo: tensor) -> tensor:
+        alpha = 0.75
+        _, _, img_height, img_width = imgs.shape
+        _, _, logo_height, logo_width = logo.shape
+
+        x_offset = img_width - logo_width
+        y_offset = img_height - logo_height
+
+        logo_imgs = imgs.clone()
+
+        logo_imgs[
+            :, :, y_offset : y_offset + logo_height, x_offset : x_offset + logo_width
+        ] = (
+            imgs[
+                :,
+                :,
+                y_offset : y_offset + logo_height,
+                x_offset : x_offset + logo_width,
             ]
-        )
-        restore_imgs = torch.stack(
-            [
-                F.rotate(tensor, -angle, interpolation=InterpolationMode.BILINEAR)
-                for tensor in rotated_imgs
-            ]
-        )
-        return restore_imgs
-
-    def __crop(self, pert: tensor, ratio: float) -> tensor:
-        from torchvision.transforms import CenterCrop
-
-        crop_size = (int(224 * ratio / 100), int(224 * ratio / 100))
-        center_crop = CenterCrop(size=crop_size)
-        padding_size = (
-            int(224 * (100 - ratio) / 200),
-            224 - int(224 * (100 - ratio) / 200) - int(224 * ratio / 100),
-            int(224 * (100 - ratio) / 200),
-            224 - int(224 * (100 - ratio) / 200) - int(224 * ratio / 100),
+            * (1 - alpha)
+            + logo * alpha
         )
 
-        cropped_img = center_crop(pert)
-        resized_image = F.interpolate(cropped_img, size=(224, 224), mode="bilinear")
-
-        return resized_image
-
-    def __cover(self, imgs: tensor) -> tensor:
-        x, y, w, h = 174, 174, 50, 50
-        cover_imgs = imgs.clone().detach()
-        cover_imgs[:, :, y : y + h, x : x + w] = 0
-
-        return cover_imgs
+        return logo_imgs
 
     def __get_gauss_noise_metrics(
         self,
@@ -691,11 +681,11 @@ class SimSwapDefense(Base, nn.Module):
         x_imgs: tensor,
         anchors_imgs: tensor,
     ) -> tuple[dict, dict, dict, dict]:
-        compress_rate = 85
+        compress_rate = 80
 
-        compress_imgs = self.__jpeg_compress(imgs1, compress_rate)
+        compress_imgs = self.__webp_compress(imgs1, compress_rate)
         compress_identity = self._get_imgs_identity(compress_imgs)
-        compress_pert_imgs = self.__jpeg_compress(x_imgs, compress_rate)
+        compress_pert_imgs = self.__webp_compress(x_imgs, compress_rate)
         compress_pert_identity = self._get_imgs_identity(compress_pert_imgs)
 
         imgs2_identity = self._get_imgs_identity(imgs2)
@@ -745,55 +735,58 @@ class SimSwapDefense(Base, nn.Module):
             target_effectivenesses,
         )
 
-    def __get_rotate_metrics(
+    def __get_brightness_metrics(
         self,
         imgs1: tensor,
         imgs2: tensor,
         x_imgs: tensor,
         anchors_imgs: tensor,
+        factor: float,
     ) -> tuple[dict, dict, dict, dict]:
-        rotate_angle = 60
-
-        rotate_imgs = self.__rotate(imgs1, rotate_angle)
-        rotate_identity = self._get_imgs_identity(rotate_imgs)
-        rotate_pert_imgs = self.__rotate(x_imgs, rotate_angle)
-        rotate_pert_identity = self._get_imgs_identity(rotate_pert_imgs)
+        brightness_imgs = self.__brightness(imgs1, factor)
+        brightness_identity = self._get_imgs_identity(brightness_imgs)
+        brightness_pert_imgs = self.__brightness(x_imgs, factor)
+        brightness_pert_identity = self._get_imgs_identity(brightness_pert_imgs)
 
         imgs2_identity = self._get_imgs_identity(imgs2)
-        rotate_swap_imgs = self.target(None, imgs2, rotate_identity, None, True)
-        reverse_rotate_swap_imgs = self.target(
-            None, rotate_imgs, imgs2_identity, None, True
+        brightness_swap_imgs = self.target(None, imgs2, brightness_identity, None, True)
+        reverse_brightness_swap_imgs = self.target(
+            None, brightness_imgs, imgs2_identity, None, True
         )
-        rotate_pert_swap_imgs = self.target(
-            None, imgs2, rotate_pert_identity, None, True
+        brightness_pert_swap_imgs = self.target(
+            None, imgs2, brightness_pert_identity, None, True
         )
-        reverse_rotate_pert_swap_imgs = self.target(
-            None, rotate_pert_imgs, imgs2_identity, None, True
+        reverse_brightness_pert_swap_imgs = self.target(
+            None, brightness_pert_imgs, imgs2_identity, None, True
         )
 
         source_effectivenesses = self.effectiveness.calculate_effectiveness(
             imgs1,
             None,
-            rotate_swap_imgs,
-            rotate_pert_swap_imgs,
+            brightness_swap_imgs,
+            brightness_pert_swap_imgs,
             anchors_imgs,
         )
         target_effectivenesses = self.effectiveness.calculate_effectiveness(
-            imgs2, None, reverse_rotate_swap_imgs, reverse_rotate_pert_swap_imgs, None
+            imgs2,
+            None,
+            reverse_brightness_swap_imgs,
+            reverse_brightness_pert_swap_imgs,
+            None,
         )
 
         self.__save_robustness_samples(
-            "rotate",
+            f"brightness_{factor}",
             [
                 imgs1,
                 imgs2,
-                rotate_imgs,
-                rotate_swap_imgs,
-                reverse_rotate_swap_imgs,
+                brightness_imgs,
+                brightness_swap_imgs,
+                reverse_brightness_swap_imgs,
                 x_imgs,
-                rotate_pert_imgs,
-                rotate_pert_swap_imgs,
-                reverse_rotate_pert_swap_imgs,
+                brightness_pert_imgs,
+                brightness_pert_swap_imgs,
+                reverse_brightness_pert_swap_imgs,
             ],
         )
 
@@ -809,11 +802,11 @@ class SimSwapDefense(Base, nn.Module):
         x_imgs: tensor,
         anchors_imgs: tensor,
     ) -> tuple[dict, dict]:
-        ratio = 90
+        border_thickness = 20
 
-        crop_imgs = self.__crop(imgs1, ratio)
+        crop_imgs = self.__crop(imgs1, border_thickness)
         crop_identity = self._get_imgs_identity(crop_imgs)
-        crop_pert_imgs = self.__crop(x_imgs, ratio)
+        crop_pert_imgs = self.__crop(x_imgs, border_thickness)
         crop_pert_identity = self._get_imgs_identity(crop_pert_imgs)
 
         imgs2_identity = self._get_imgs_identity(imgs2)
@@ -857,16 +850,16 @@ class SimSwapDefense(Base, nn.Module):
             target_effectivenesses,
         )
 
-    def __get_cover_metrics(
+    def __get_blocking_metrics(
         self,
         imgs1: tensor,
         imgs2: tensor,
         x_imgs: tensor,
         anchors_imgs: tensor,
     ) -> tuple[dict, dict]:
-        cover_imgs = self.__cover(imgs1)
+        cover_imgs = self.__crop(imgs1)
         cover_identity = self._get_imgs_identity(cover_imgs)
-        cover_pert_imgs = self.__cover(x_imgs)
+        cover_pert_imgs = self.__crop(x_imgs)
         cover_pert_identity = self._get_imgs_identity(cover_pert_imgs)
 
         imgs2_identity = self._get_imgs_identity(imgs2)
@@ -910,6 +903,60 @@ class SimSwapDefense(Base, nn.Module):
             target_effectivenesses,
         )
 
+    def __get_logo_metrics(
+        self,
+        imgs1: tensor,
+        imgs2: tensor,
+        x_imgs: tensor,
+        logo: tensor,
+        anchors_imgs: tensor,
+    ) -> tuple[dict, dict]:
+        logo_imgs = self.__logo(imgs1, logo)
+        logo_identity = self._get_imgs_identity(logo_imgs)
+        logo_pert_imgs = self.__logo(x_imgs, logo)
+        logo_pert_identity = self._get_imgs_identity(logo_pert_imgs)
+
+        imgs2_identity = self._get_imgs_identity(imgs2)
+        logo_swap_imgs = self.target(None, imgs2, logo_identity, None, True)
+        reverse_logo_swap_imgs = self.target(
+            None, logo_imgs, imgs2_identity, None, True
+        )
+        logo_pert_swap_imgs = self.target(None, imgs2, logo_pert_identity, None, True)
+        reverse_logo_pert_swap_imgs = self.target(
+            None, logo_pert_imgs, imgs2_identity, None, True
+        )
+
+        source_effectivenesses = self.effectiveness.calculate_effectiveness(
+            imgs1,
+            None,
+            logo_swap_imgs,
+            logo_pert_swap_imgs,
+            anchors_imgs,
+        )
+        target_effectivenesses = self.effectiveness.calculate_effectiveness(
+            imgs2, None, reverse_logo_swap_imgs, reverse_logo_pert_swap_imgs, None
+        )
+
+        self.__save_robustness_samples(
+            "logo",
+            [
+                imgs1,
+                imgs2,
+                logo_imgs,
+                logo_swap_imgs,
+                reverse_logo_swap_imgs,
+                x_imgs,
+                logo_pert_imgs,
+                logo_pert_swap_imgs,
+                reverse_logo_pert_swap_imgs,
+            ],
+        )
+
+        return (
+            source_effectivenesses,
+            target_effectivenesses,
+        )
+
     def pgd_both_robustness_sample(self):
         self.logger.info(
             f"loss_weights: {self.pgd_loss_weights}, loss_limits: {self.pgd_loss_limits}"
@@ -923,6 +970,8 @@ class SimSwapDefense(Base, nn.Module):
         best_anchor_imgs = self.anchor.find_best_anchors(imgs1)
         x_imgs = self.__perturb_pgd_imgs(imgs1, best_anchor_imgs)
 
+        logo = self.__load_logo()
+
         (
             noise_source_effectivenesses,
             noise_target_effectivenesses,
@@ -934,30 +983,36 @@ class SimSwapDefense(Base, nn.Module):
         ) = self.__get_compress_metrics(imgs1, imgs2, x_imgs, best_anchor_imgs)
 
         (
-            rotate_source_effectivenesses,
-            rotate_target_effectivenesses,
-        ) = self.__get_rotate_metrics(imgs1, imgs2, x_imgs, best_anchor_imgs)
-
-        (
             crop_source_effectivenesses,
             crop_target_effectivenesses,
         ) = self.__get_crop_metrics(imgs1, imgs2, x_imgs, best_anchor_imgs)
 
         (
-            cover_source_effectivenesses,
-            cover_target_effectivenesses,
-        ) = self.__get_cover_metrics(imgs1, imgs2, x_imgs, best_anchor_imgs)
+            logo_source_effectivenesses,
+            logo_target_effectivenesses,
+        ) = self.__get_logo_metrics(imgs1, imgs2, x_imgs, logo, best_anchor_imgs)
+
+        (
+            inc_bright_source_effectivenesses,
+            inc_bright_target_effectivenesses,
+        ) = self.__get_brightness_metrics(imgs1, imgs2, x_imgs, best_anchor_imgs, 1.25)
+
+        (
+            dec_bright_source_effectivenesses,
+            dec_bright_target_effectivenesses,
+        ) = self.__get_brightness_metrics(imgs1, imgs2, x_imgs, best_anchor_imgs, 0.75)
 
         torch.cuda.empty_cache()
         self.logger.info(
             f"""
-            noise, compress, rotate, zoom in and cover effectiveness{self.effectiveness.candi_funcs.keys()}
-            source(robust swap, robust pert swap, anchor), target(robust swap, robust pert swap)
+            noise, compress, crop, overlay, increase and decrease the brightness {self.effectiveness.candi_funcs.keys()}
+            source(robust swap, robust pert swap), target(robust swap, robust pert swap)
             {self.__generate_iter_robustness_log(noise_source_effectivenesses,noise_target_effectivenesses)}
             {self.__generate_iter_robustness_log(compress_source_effectivenesses,compress_target_effectivenesses)}
-            {self.__generate_iter_robustness_log(rotate_source_effectivenesses,rotate_target_effectivenesses)}
             {self.__generate_iter_robustness_log(crop_source_effectivenesses,crop_target_effectivenesses)}
-            {self.__generate_iter_robustness_log(cover_source_effectivenesses,cover_target_effectivenesses)}
+            {self.__generate_iter_robustness_log(logo_source_effectivenesses,logo_target_effectivenesses)}
+            {self.__generate_iter_robustness_log(inc_bright_source_effectivenesses,inc_bright_target_effectivenesses)}
+            {self.__generate_iter_robustness_log(dec_bright_source_effectivenesses,dec_bright_target_effectivenesses)}
             """
         )
 
@@ -1013,11 +1068,13 @@ class SimSwapDefense(Base, nn.Module):
         data = {
             "noise": deepcopy(data),
             "compress": deepcopy(data),
-            "rotate": deepcopy(data),
             "crop": deepcopy(data),
-            "cover": deepcopy(data),
+            "logo": deepcopy(data),
+            "inc_bright": deepcopy(data),
+            "dec_bright": deepcopy(data),
         }
 
+        logo = self.__load_logo()
         total_batch = min(len(imgs1_path), len(imgs2_imgs_path)) // self.args.batch_size
         for i in range(total_batch):
             iter_imgs1_path = imgs1_path[
@@ -1037,7 +1094,6 @@ class SimSwapDefense(Base, nn.Module):
                 noise_source_effectivenesses,
                 noise_target_effectivenesses,
             ) = self.__get_gauss_noise_metrics(imgs1, imgs2, x_imgs, best_anchor_imgs)
-
             self.__merge_robustness_metric(
                 data,
                 noise_source_effectivenesses,
@@ -1057,17 +1113,6 @@ class SimSwapDefense(Base, nn.Module):
             )
 
             (
-                rotate_source_effectivenesses,
-                rotate_target_effectivenesses,
-            ) = self.__get_rotate_metrics(imgs1, imgs2, x_imgs, best_anchor_imgs)
-            self.__merge_robustness_metric(
-                data,
-                rotate_source_effectivenesses,
-                rotate_target_effectivenesses,
-                "rotate",
-            )
-
-            (
                 crop_source_effectivenesses,
                 crop_target_effectivenesses,
             ) = self.__get_crop_metrics(imgs1, imgs2, x_imgs, best_anchor_imgs)
@@ -1079,36 +1124,64 @@ class SimSwapDefense(Base, nn.Module):
             )
 
             (
-                cover_source_effectivenesses,
-                cover_target_effectivenesses,
-            ) = self.__get_cover_metrics(imgs1, imgs2, x_imgs, best_anchor_imgs)
+                logo_source_effectivenesses,
+                logo_target_effectivenesses,
+            ) = self.__get_logo_metrics(imgs1, imgs2, x_imgs, logo, best_anchor_imgs)
             self.__merge_robustness_metric(
                 data,
-                cover_source_effectivenesses,
-                cover_target_effectivenesses,
-                "cover",
+                logo_source_effectivenesses,
+                logo_target_effectivenesses,
+                "logo",
+            )
+
+            (
+                inc_bright_source_effectivenesses,
+                inc_bright_target_effectivenesses,
+            ) = self.__get_brightness_metrics(
+                imgs1, imgs2, x_imgs, best_anchor_imgs, 1.25
+            )
+            self.__merge_robustness_metric(
+                data,
+                inc_bright_source_effectivenesses,
+                inc_bright_target_effectivenesses,
+                "inc_bright",
+            )
+
+            (
+                dec_bright_source_effectivenesses,
+                dec_bright_target_effectivenesses,
+            ) = self.__get_brightness_metrics(
+                imgs1, imgs2, x_imgs, best_anchor_imgs, 0.75
+            )
+            self.__merge_robustness_metric(
+                data,
+                dec_bright_source_effectivenesses,
+                dec_bright_target_effectivenesses,
+                "dec_bright",
             )
 
             torch.cuda.empty_cache()
             self.logger.info(
                 f"""
-            noise, compress, rotate, crop, and cover effectiveness{self.effectiveness.candi_funcs.keys()}
+            noise, compress, crop, overlay, increase and decrease the brightness {self.effectiveness.candi_funcs.keys()}
             source(robust swap, robust pert swap, anchor), target(robust swap, robust pert swap)
             {self.__generate_iter_robustness_log(noise_source_effectivenesses,noise_target_effectivenesses)}
             {self.__generate_iter_robustness_log(compress_source_effectivenesses,compress_target_effectivenesses)}
-            {self.__generate_iter_robustness_log(rotate_source_effectivenesses,rotate_target_effectivenesses)}
             {self.__generate_iter_robustness_log(crop_source_effectivenesses,crop_target_effectivenesses)}
-            {self.__generate_iter_robustness_log(cover_source_effectivenesses,cover_target_effectivenesses)}
+            {self.__generate_iter_robustness_log(logo_source_effectivenesses,logo_target_effectivenesses)}
+            {self.__generate_iter_robustness_log(inc_bright_source_effectivenesses,inc_bright_target_effectivenesses)}
+            {self.__generate_iter_robustness_log(dec_bright_source_effectivenesses,dec_bright_target_effectivenesses)}
             """
             )
 
             self.logger.info(
-                f"""[{i + 1}/{total_batch}]Average of {self.args.batch_size * (i + 1)} pictures(noise, compress, rotate)
+                f"""[{i + 1}/{total_batch}]Average of {self.args.batch_size * (i + 1)} pictures
             {self.__generate_summary_robustness_log(data['noise'])}
             {self.__generate_summary_robustness_log(data['compress'])}
-            {self.__generate_summary_robustness_log(data['rotate'])}
             {self.__generate_summary_robustness_log(data['crop'])}
-            {self.__generate_summary_robustness_log(data['cover'])}
+            {self.__generate_summary_robustness_log(data['logo'])}
+            {self.__generate_summary_robustness_log(data['inc_bright'])}
+            {self.__generate_summary_robustness_log(data['dec_bright'])}
             """
             )
 
@@ -1510,6 +1583,8 @@ class SimSwapDefense(Base, nn.Module):
         imgs2 = self._load_imgs(self.imgs2_path)
         pert_imgs1 = self.GAN_G(imgs1)
 
+        logo = self.__load_logo()
+
         (
             noise_source_effectivenesses,
             noise_target_effectivenesses,
@@ -1521,30 +1596,36 @@ class SimSwapDefense(Base, nn.Module):
         ) = self.__get_compress_metrics(imgs1, imgs2, pert_imgs1, None)
 
         (
-            rotate_source_effectivenesses,
-            rotate_target_effectivenesses,
-        ) = self.__get_rotate_metrics(imgs1, imgs2, pert_imgs1, None)
-
-        (
             crop_source_effectivenesses,
             crop_target_effectivenesses,
         ) = self.__get_crop_metrics(imgs1, imgs2, pert_imgs1, None)
 
         (
-            cover_source_effectivenesses,
-            cover_target_effectivenesses,
-        ) = self.__get_cover_metrics(imgs1, imgs2, pert_imgs1, None)
+            logo_source_effectivenesses,
+            logo_target_effectivenesses,
+        ) = self.__get_logo_metrics(imgs1, imgs2, pert_imgs1, logo, None)
+
+        (
+            inc_bright_source_effectivenesses,
+            inc_bright_target_effectivenesses,
+        ) = self.__get_brightness_metrics(imgs1, imgs2, pert_imgs1, None, 1.25)
+
+        (
+            dec_bright_source_effectivenesses,
+            dec_bright_target_effectivenesses,
+        ) = self.__get_brightness_metrics(imgs1, imgs2, pert_imgs1, None, 0.75)
 
         torch.cuda.empty_cache()
         self.logger.info(
             f"""
-            noise, compress, rotate, zoom in and cover effectiveness{self.effectiveness.candi_funcs.keys()}
+            noise, compress, crop, overlay, increase and decrease the brightness {self.effectiveness.candi_funcs.keys()}
             source(robust swap, robust pert swap), target(robust swap, robust pert swap)
             {self.__generate_iter_robustness_log(noise_source_effectivenesses,noise_target_effectivenesses)}
             {self.__generate_iter_robustness_log(compress_source_effectivenesses,compress_target_effectivenesses)}
-            {self.__generate_iter_robustness_log(rotate_source_effectivenesses,rotate_target_effectivenesses)}
             {self.__generate_iter_robustness_log(crop_source_effectivenesses,crop_target_effectivenesses)}
-            {self.__generate_iter_robustness_log(cover_source_effectivenesses,cover_target_effectivenesses)}
+            {self.__generate_iter_robustness_log(logo_source_effectivenesses,logo_target_effectivenesses)}
+            {self.__generate_iter_robustness_log(inc_bright_source_effectivenesses,inc_bright_target_effectivenesses)}
+            {self.__generate_iter_robustness_log(dec_bright_source_effectivenesses,dec_bright_target_effectivenesses)}
             """
         )
 
@@ -1575,11 +1656,13 @@ class SimSwapDefense(Base, nn.Module):
         data = {
             "noise": deepcopy(data),
             "compress": deepcopy(data),
-            "rotate": deepcopy(data),
             "crop": deepcopy(data),
-            "cover": deepcopy(data),
+            "logo": deepcopy(data),
+            "inc_bright": deepcopy(data),
+            "dec_bright": deepcopy(data),
         }
 
+        logo = self.__load_logo()
         total_batch = min(len(imgs1_path), len(imgs2_imgs_path)) // self.args.batch_size
         for i in range(total_batch):
             iter_imgs1_path = imgs1_path[
@@ -1598,7 +1681,6 @@ class SimSwapDefense(Base, nn.Module):
                 noise_source_effectivenesses,
                 noise_target_effectivenesses,
             ) = self.__get_gauss_noise_metrics(imgs1, imgs2, pert_imgs1, None)
-
             self.__merge_robustness_metric(
                 data,
                 noise_source_effectivenesses,
@@ -1618,17 +1700,6 @@ class SimSwapDefense(Base, nn.Module):
             )
 
             (
-                rotate_source_effectivenesses,
-                rotate_target_effectivenesses,
-            ) = self.__get_rotate_metrics(imgs1, imgs2, pert_imgs1, None)
-            self.__merge_robustness_metric(
-                data,
-                rotate_source_effectivenesses,
-                rotate_target_effectivenesses,
-                "rotate",
-            )
-
-            (
                 crop_source_effectivenesses,
                 crop_target_effectivenesses,
             ) = self.__get_crop_metrics(imgs1, imgs2, pert_imgs1, None)
@@ -1640,36 +1711,60 @@ class SimSwapDefense(Base, nn.Module):
             )
 
             (
-                cover_source_effectivenesses,
-                cover_target_effectivenesses,
-            ) = self.__get_cover_metrics(imgs1, imgs2, pert_imgs1, None)
+                logo_source_effectivenesses,
+                logo_target_effectivenesses,
+            ) = self.__get_logo_metrics(imgs1, imgs2, pert_imgs1, logo, None)
             self.__merge_robustness_metric(
                 data,
-                cover_source_effectivenesses,
-                cover_target_effectivenesses,
-                "cover",
+                logo_source_effectivenesses,
+                logo_target_effectivenesses,
+                "logo",
+            )
+
+            (
+                inc_bright_source_effectivenesses,
+                inc_bright_target_effectivenesses,
+            ) = self.__get_brightness_metrics(imgs1, imgs2, pert_imgs1, None, 1.25)
+            self.__merge_robustness_metric(
+                data,
+                inc_bright_source_effectivenesses,
+                inc_bright_target_effectivenesses,
+                "inc_bright",
+            )
+
+            (
+                dec_bright_source_effectivenesses,
+                dec_bright_target_effectivenesses,
+            ) = self.__get_brightness_metrics(imgs1, imgs2, pert_imgs1, None, 0.75)
+            self.__merge_robustness_metric(
+                data,
+                dec_bright_source_effectivenesses,
+                dec_bright_target_effectivenesses,
+                "dec_bright",
             )
 
             torch.cuda.empty_cache()
             self.logger.info(
                 f"""
-            noise, compress, rotate, crop, and cover effectiveness{self.effectiveness.candi_funcs.keys()}
-            source(robust swap, robust pert swap), target(robust swap, robust pert swap)
+            noise, compress, crop, overlay, increase and decrease the brightness {self.effectiveness.candi_funcs.keys()}
+            source(robust swap, robust pert swap, anchor), target(robust swap, robust pert swap)
             {self.__generate_iter_robustness_log(noise_source_effectivenesses,noise_target_effectivenesses)}
             {self.__generate_iter_robustness_log(compress_source_effectivenesses,compress_target_effectivenesses)}
-            {self.__generate_iter_robustness_log(rotate_source_effectivenesses,rotate_target_effectivenesses)}
             {self.__generate_iter_robustness_log(crop_source_effectivenesses,crop_target_effectivenesses)}
-            {self.__generate_iter_robustness_log(cover_source_effectivenesses,cover_target_effectivenesses)}
+            {self.__generate_iter_robustness_log(logo_source_effectivenesses,logo_target_effectivenesses)}
+            {self.__generate_iter_robustness_log(inc_bright_source_effectivenesses,inc_bright_target_effectivenesses)}
+            {self.__generate_iter_robustness_log(dec_bright_source_effectivenesses,dec_bright_target_effectivenesses)}
             """
             )
 
             self.logger.info(
-                f"""[{i + 1}/{total_batch}]Average of {self.args.batch_size * (i + 1)} pictures(noise, compress, rotate)
+                f"""[{i + 1}/{total_batch}]Average of {self.args.batch_size * (i + 1)} pictures
             {self.__generate_summary_robustness_log(data['noise'])}
             {self.__generate_summary_robustness_log(data['compress'])}
-            {self.__generate_summary_robustness_log(data['rotate'])}
             {self.__generate_summary_robustness_log(data['crop'])}
-            {self.__generate_summary_robustness_log(data['cover'])}
+            {self.__generate_summary_robustness_log(data['logo'])}
+            {self.__generate_summary_robustness_log(data['inc_bright'])}
+            {self.__generate_summary_robustness_log(data['dec_bright'])}
             """
             )
 
