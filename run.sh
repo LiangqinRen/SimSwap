@@ -7,12 +7,21 @@ else
     console_only=""
 fi
 
-if [[ $mode == 'pgd_both_sample' ]] || [[ $mode == 'pgd_both_robustness_sample' ]]
+if [[ $mode == 'swap' ]]
+then
+    python main.py $console_only --method $mode --batch_size 1
+elif [[ $mode == 'pgd_both_sample' ]]
 then
     python main.py $console_only --method $mode --epochs 1000 --pgd_epsilon 0.005
-elif [[ $mode == 'pgd_both_metric' ]] || [[ $mode == 'pgd_both_robustness_metric' ]]
+elif [[ $mode == 'pgd_both_robustness_sample' ]]
+then
+    python main.py $console_only --method $mode --epochs 335 --pgd_epsilon 0.005
+elif [[ $mode == 'pgd_both_metric' ]]
 then
     python main.py $console_only --method $mode --epochs 1000 --pgd_epsilon 0.005 --batch_size 12
+elif [[ $mode == 'pgd_both_robustness_metric' ]]
+then
+    python main.py $console_only --method $mode --epochs 335 --pgd_epsilon 0.005 --batch_size 12
 elif [[ $mode == 'gan_both_train' ]]
 then
     python main.py $console_only --method $mode --batch_size 7 --log_interval 250 --epochs 500000

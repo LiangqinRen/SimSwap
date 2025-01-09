@@ -22,10 +22,73 @@ class Robustness(Base, nn.Module):
 
         self.test_imgs_path = self.__get_all_test_imgs_path()
 
-    def __load_logo(self) -> tensor:
-        logo_path = join(self.args.data_dir, "samples", "ccs.png")
+    def _load_logo(self) -> tensor:
+        logo_path = join(self.args.data_dir, "samples", "usenix.png")
         logo = self._load_imgs([logo_path])
         return logo
+
+    def _gauss_noise(self, pert: tensor, gauss_mean: float, gauss_std: float) -> tensor:
+        gauss_noise = gauss_mean + gauss_std * torch.randn(pert.shape).cuda()
+        noise_pert = pert + gauss_noise
+
+        return noise_pert
+
+    def _webp_compress(self, imgs, quality):
+        compressed_imgs = []
+        for i in range(imgs.size(0)):
+            img = imgs[i]
+            pil_img = ToPILImage()(img)
+
+            buffer = io.BytesIO()
+            pil_img.save(buffer, format="WEBP", quality=quality)
+            buffer.seek(0)
+
+            compressed_img = Image.open(buffer)
+            compressed_img = ToTensor()(compressed_img)
+
+            compressed_imgs.append(compressed_img)
+
+        return torch.stack(compressed_imgs).cuda()
+
+    def _crop(self, imgs: tensor, thickness: float) -> tensor:
+        crop_imgs = imgs.clone()
+        crop_imgs[:, :, :thickness, :] = 0
+        crop_imgs[:, :, -thickness:, :] = 0
+        crop_imgs[:, :, :, :thickness] = 0
+        crop_imgs[:, :, :, -thickness:] = 0
+
+        return crop_imgs
+
+    def _logo(self, imgs: tensor, logo: tensor) -> tensor:
+        alpha = 0.75
+        _, _, img_height, img_width = imgs.shape
+        _, _, logo_height, logo_width = logo.shape
+
+        x_offset = img_width - logo_width
+        y_offset = img_height - logo_height
+
+        logo_imgs = imgs.clone()
+
+        logo_imgs[
+            :, :, y_offset : y_offset + logo_height, x_offset : x_offset + logo_width
+        ] = (
+            imgs[
+                :,
+                :,
+                y_offset : y_offset + logo_height,
+                x_offset : x_offset + logo_width,
+            ]
+            * (1 - alpha)
+            + logo * alpha
+        )
+
+        return logo_imgs
+
+    def _brightness(self, imgs, brightness_factor: float):
+        adjusted_tensor = imgs * brightness_factor
+        adjusted_tensor = torch.clamp(adjusted_tensor, 0, 1)
+
+        return adjusted_tensor
 
     def __get_all_test_imgs_path(self) -> list:
         imgs_path = []
@@ -52,73 +115,6 @@ class Robustness(Base, nn.Module):
 
         return imgs_path
 
-    def __gauss_noise(
-        self, pert: tensor, gauss_mean: float, gauss_std: float
-    ) -> tensor:
-        gauss_noise = gauss_mean + gauss_std * torch.randn(pert.shape).cuda()
-        noise_pert = pert + gauss_noise
-
-        return noise_pert
-
-    def __webp_compress(self, imgs, quality):
-        compressed_tensors = []
-
-        for i in range(imgs.size(0)):
-            single_image_tensor = imgs[i]
-
-            pil_image = ToPILImage()(single_image_tensor)
-
-            buffer = io.BytesIO()
-            pil_image.save(buffer, format="WEBP", quality=quality)
-            buffer.seek(0)
-
-            compressed_image = Image.open(buffer)
-            compressed_tensor = ToTensor()(compressed_image)
-
-            compressed_tensors.append(compressed_tensor)
-
-        return torch.stack(compressed_tensors).cuda()
-
-    def __crop(self, imgs: tensor, thickness: float) -> tensor:
-        crop_imgs = imgs.clone()
-        crop_imgs[:, :, :thickness, :] = 0
-        crop_imgs[:, :, -thickness:, :] = 0
-        crop_imgs[:, :, :, :thickness] = 0
-        crop_imgs[:, :, :, -thickness:] = 0
-
-        return crop_imgs
-
-    def __brightness(self, imgs, brightness_factor: float):
-        adjusted_tensor = imgs * brightness_factor
-        adjusted_tensor = torch.clamp(adjusted_tensor, 0, 1)
-
-        return adjusted_tensor
-
-    def __logo(self, imgs: tensor, logo: tensor) -> tensor:
-        alpha = 0.75
-        _, _, img_height, img_width = imgs.shape
-        _, _, logo_height, logo_width = logo.shape
-
-        x_offset = img_width - logo_width
-        y_offset = img_height - logo_height
-
-        logo_imgs = imgs.clone()
-
-        logo_imgs[
-            :, :, y_offset : y_offset + logo_height, x_offset : x_offset + logo_width
-        ] = (
-            imgs[
-                :,
-                :,
-                y_offset : y_offset + logo_height,
-                x_offset : x_offset + logo_width,
-            ]
-            * (1 - alpha)
-            + logo * alpha
-        )
-
-        return logo_imgs
-
     def artificial_gan_fingerprints_swap(self):
         fingerprints_path = sorted(
             os.listdir(join(self.args.data_dir, "fingerprinted_images"))
@@ -127,7 +123,7 @@ class Robustness(Base, nn.Module):
             join(self.args.data_dir, "fingerprinted_images", i)
             for i in fingerprints_path
         ]
-        logo = self.__load_logo()
+        logo = self._load_logo()
 
         total_batch = len(fingerprints_path) // self.args.batch_size
         os.makedirs(join(self.args.log_dir, "image", "noise"), exist_ok=True)
@@ -143,12 +139,12 @@ class Robustness(Base, nn.Module):
 
             imgs1 = self._load_imgs(iter_imgs1_path)
 
-            noise_imgs1 = self.__gauss_noise(imgs1, 0, 0.1)
-            compress_imgs1 = self.__webp_compress(imgs1, 80)
-            crop_imgs1 = self.__crop(imgs1, 20)
-            logo_imgs1 = self.__logo(imgs1, logo)
-            inc_bright_imgs1 = self.__brightness(imgs1, 1.25)
-            dec_bright_imgs1 = self.__brightness(imgs1, 0.75)
+            noise_imgs1 = self._gauss_noise(imgs1, 0, 0.1)
+            compress_imgs1 = self._webp_compress(imgs1, 80)
+            crop_imgs1 = self._crop(imgs1, 20)
+            logo_imgs1 = self._logo(imgs1, logo)
+            inc_bright_imgs1 = self._brightness(imgs1, 1.25)
+            dec_bright_imgs1 = self._brightness(imgs1, 0.75)
 
             for j in range(noise_imgs1.shape[0]):
                 save_image(
@@ -182,14 +178,14 @@ class Robustness(Base, nn.Module):
                 )
 
     def sepmark(self, img1: tensor) -> dict:
-        logo = self.__load_logo()
+        logo = self._load_logo()
 
-        noise_img1 = self.__gauss_noise(img1, 0, 0.1)
-        compress_img1 = self.__webp_compress(img1, 80)
-        crop_img1 = self.__crop(img1, 20)
-        logo_img1 = self.__logo(img1, logo)
-        inc_bright_img1 = self.__brightness(img1, 1.25)
-        dec_bright_img1 = self.__brightness(img1, 0.75)
+        noise_img1 = self._gauss_noise(img1, 0, 0.1)
+        compress_img1 = self._webp_compress(img1, 80)
+        crop_img1 = self._crop(img1, 20)
+        logo_img1 = self._logo(img1, logo)
+        inc_bright_img1 = self._brightness(img1, 1.25)
+        dec_bright_img1 = self._brightness(img1, 0.75)
 
         img2_path = random.sample(self.test_imgs_path, 1)
         img2 = self._load_imgs(img2_path)
