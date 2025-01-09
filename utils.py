@@ -101,6 +101,7 @@ def get_argparser():
     parser.add_argument("--testset_percentage", type=int, default=10)
 
     parser.add_argument("--pgd_epsilon", type=float, default=1e-2)
+    parser.add_argument("--gan_train_robust", action="store_true")
     parser.add_argument("--gan_generator_lr", type=float, default=5e-4)
     parser.add_argument("--gan_test_models", type=str)
 

@@ -39,6 +39,8 @@ class SimSwapDefense(Base, nn.Module):
         self.pgd_loss_limits = {"latent": 30}
 
         self.gan_rgb_limits = [0.075, 0.03, 0.075]
+        if self.args.gan_train_robust:
+            self.gan_rgb_limits = [i * 3 for i in self.gan_rgb_limits]
         self.gan_loss_weights = {
             "pert": 750,
             "identity": 375,
@@ -1106,7 +1108,12 @@ class SimSwapDefense(Base, nn.Module):
             f"rgb_limits: {self.gan_rgb_limits}, loss_weights: {self.gan_loss_weights}, loss_limits: {self.gan_loss_limits}"
         )
 
-        self.GAN_G.load_state_dict(self.target.netG.state_dict(), strict=False)
+        if self.args.gan_train_robust:
+            model_path = join("checkpoints", self.args.gan_test_models)
+            self.GAN_G.load_state_dict(torch.load(model_path)["GAN_G_state_dict"])
+        else:
+            self.GAN_G.load_state_dict(self.target.netG.state_dict(), strict=False)
+
         optimizer_G = optim.Adam(
             [
                 {"params": self.GAN_G.up1.parameters()},
@@ -1150,6 +1157,8 @@ class SimSwapDefense(Base, nn.Module):
             imgs1_latent_code = self.target.netG.encoder(imgs1)
 
             pert_imgs1 = self.GAN_G(imgs1)
+            if epoch % 5 == 0 and self.args.gan_train_robust:
+                pert_imgs1 = self.robustness._webp_compress(pert_imgs1, 80)
             pert_imgs1_identity = self._get_imgs_identity(pert_imgs1)
             pert_imgs1_latent_code = self.target.netG.encoder(pert_imgs1)
 

@@ -25,6 +25,9 @@ then
 elif [[ $mode == 'gan_both_train' ]]
 then
     python main.py $console_only --method $mode --batch_size 7 --log_interval 250 --epochs 500000
+elif [[ $mode == 'gan_both_train_robust' ]]
+then
+    python main.py $console_only --method 'gan_both_train' --batch_size 7 --log_interval 250 --epochs 250000 --gan_train_robust --gan_test_models "gan_both.pth"
 elif [[ $mode == 'gan_both_sample' ]] || [[ $mode == 'gan_both_robustness_sample' ]]
 then
     python main.py $console_only --method $mode --gan_test_models "gan_both.pth"
