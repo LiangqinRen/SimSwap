@@ -19,6 +19,9 @@ then
 elif [[ $mode == 'pgd_both_robustness_metric' ]]
 then
     python main.py $console_only --method $mode --epochs 335 --pgd_epsilon 0.005 --batch_size 12
+elif [[ $mode == 'pgd_robustness_forensics_sample' ]]
+then
+    python main.py $console_only --method $mode --epochs 335 --pgd_epsilon 0.005
 elif [[ $mode == 'pgd_robustness_forensics_metric' ]]
 then
     python main.py $console_only --method $mode --epochs 335 --pgd_epsilon 0.005 --batch_size 30

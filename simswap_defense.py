@@ -1108,6 +1108,103 @@ class SimSwapDefense(Base, nn.Module):
 
         return effectivenesses
 
+    def __save_forensics_samples(self, experiment: str, imgs: list[tensor]) -> None:
+        img_names = [
+            "img1",
+            "img2",
+            "swap",
+            "pert_swap",
+            f"{experiment}_pert_swap",
+        ]
+
+        for i, name in enumerate(img_names):
+            for j in range(imgs[i].shape[0]):
+                save_image(
+                    imgs[i][j], join(self.args.log_dir, "image", f"{name}_{j}.png")
+                )
+
+        results = torch.cat(imgs, dim=0)
+        save_image(
+            results,
+            join(self.args.log_dir, "image", f"{experiment}_summary.png"),
+            nrow=imgs[0].shape[0],
+        )
+        del results
+
+    def pgd_robustness_forensics_sample(self):
+        self.logger.info(
+            f"loss_weights: {self.pgd_loss_weights}, loss_limits: {self.pgd_loss_limits}"
+        )
+
+        self.target.cuda().eval()
+
+        imgs1 = self._load_imgs(self.imgs1_path)
+        imgs2 = self._load_imgs(self.imgs2_path)
+
+        best_anchor_imgs = self.anchor.find_best_anchors(imgs1)
+        x_imgs = self.__perturb_pgd_imgs(imgs1, best_anchor_imgs, silent=True)
+        x_imgs = self.robustness._webp_compress(x_imgs, 80)
+        x_imgs = self.__perturb_pgd_imgs(x_imgs, best_anchor_imgs, silent=True)
+        x_imgs = self.robustness._webp_compress(x_imgs, 80)
+        x_imgs = self.__perturb_pgd_imgs(x_imgs, best_anchor_imgs, silent=True)
+
+        imgs1_identity = self._get_imgs_identity(imgs1)
+        imgs1_src_swap = self.target(None, imgs2, imgs1_identity, None, True)
+        pert_imgs1_identity = self._get_imgs_identity(x_imgs)
+        pert_imgs1_src_swap = self.target(None, imgs2, pert_imgs1_identity, None, True)
+
+        logo = self.__load_logo()
+        results = {"clean": pert_imgs1_src_swap}
+        results["noise"] = self.robustness._gauss_noise(pert_imgs1_src_swap)
+        self.__save_forensics_samples(
+            "noise",
+            [imgs1, imgs2, imgs1_src_swap, pert_imgs1_src_swap, results["noise"]],
+        )
+        results["compress"] = self.robustness._webp_compress(pert_imgs1_src_swap)
+        self.__save_forensics_samples(
+            "compress",
+            [imgs1, imgs2, imgs1_src_swap, pert_imgs1_src_swap, results["compress"]],
+        )
+        results["crop"] = self.robustness._crop(pert_imgs1_src_swap)
+        self.__save_forensics_samples(
+            "crop",
+            [imgs1, imgs2, imgs1_src_swap, pert_imgs1_src_swap, results["crop"]],
+        )
+        results["logo"] = self.robustness._logo(pert_imgs1_src_swap, logo)
+        self.__save_forensics_samples(
+            "logo",
+            [imgs1, imgs2, imgs1_src_swap, pert_imgs1_src_swap, results["logo"]],
+        )
+        results["inc_bright"] = self.robustness._brightness(pert_imgs1_src_swap, 1.25)
+        self.__save_forensics_samples(
+            "inc_bright",
+            [imgs1, imgs2, imgs1_src_swap, pert_imgs1_src_swap, results["inc_bright"]],
+        )
+        results["dec_bright"] = self.robustness._brightness(pert_imgs1_src_swap, 0.75)
+        self.__save_forensics_samples(
+            "dec_bright",
+            [imgs1, imgs2, imgs1_src_swap, pert_imgs1_src_swap, results["dec_bright"]],
+        )
+
+        forensic_metrics = self.__get_robustness_forensics_metric(
+            best_anchor_imgs, results
+        )
+
+        torch.cuda.empty_cache()
+        self.logger.info(
+            f"""
+        clean, noise, compress, crop, overlay, increase and decrease the brightness {self.effectiveness.candi_funcs.keys()}
+        cloak images
+        {self.__generate_forensics_robustness_log(forensic_metrics['clean'])}
+        {self.__generate_forensics_robustness_log(forensic_metrics['noise'])}
+        {self.__generate_forensics_robustness_log(forensic_metrics['compress'])}
+        {self.__generate_forensics_robustness_log(forensic_metrics['crop'])}
+        {self.__generate_forensics_robustness_log(forensic_metrics['logo'])}
+        {self.__generate_forensics_robustness_log(forensic_metrics['inc_bright'])}
+        {self.__generate_forensics_robustness_log(forensic_metrics['dec_bright'])}
+        """
+        )
+
     def pgd_robustness_forensics_metric(self):
         self.logger.info(
             f"loss_weights: {self.pgd_loss_weights}, loss_limits: {self.pgd_loss_limits}"
@@ -1122,6 +1219,7 @@ class SimSwapDefense(Base, nn.Module):
             item_data[effec] = {"anchor": (0, 0)}
 
         data = {
+            "clean": deepcopy(item_data),
             "noise": deepcopy(item_data),
             "compress": deepcopy(item_data),
             "crop": deepcopy(item_data),
@@ -1155,7 +1253,7 @@ class SimSwapDefense(Base, nn.Module):
                 None, imgs2, pert_imgs1_identity, None, True
             )
 
-            swap_results = {}
+            swap_results = {"clean": pert_imgs1_src_swap}
             swap_results["noise"] = self.robustness._gauss_noise(pert_imgs1_src_swap)
             swap_results["compress"] = self.robustness._webp_compress(
                 pert_imgs1_src_swap
@@ -1179,6 +1277,7 @@ class SimSwapDefense(Base, nn.Module):
                 f"""
             noise, compress, crop, overlay, increase and decrease the brightness {self.effectiveness.candi_funcs.keys()}
             cloak images
+            {self.__generate_forensics_robustness_log(forensic_metrics['clean'])}
             {self.__generate_forensics_robustness_log(forensic_metrics['noise'])}
             {self.__generate_forensics_robustness_log(forensic_metrics['compress'])}
             {self.__generate_forensics_robustness_log(forensic_metrics['crop'])}
@@ -1190,6 +1289,7 @@ class SimSwapDefense(Base, nn.Module):
 
             self.logger.info(
                 f"""[{i + 1}/{total_batch}]Average of {self.args.batch_size * (i + 1)} pictures
+            {self.__generate_forensics_robustness_log(data['clean'])}
             {self.__generate_forensics_robustness_log(data['noise'])}
             {self.__generate_forensics_robustness_log(data['compress'])}
             {self.__generate_forensics_robustness_log(data['crop'])}
