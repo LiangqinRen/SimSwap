@@ -19,6 +19,7 @@ def main():
         "pgd_both_metric": defense.pgd_both_metric,
         "pgd_both_robustness_sample": defense.pgd_both_robustness_sample,
         "pgd_both_robustness_metric": defense.pgd_both_robustness_metric,
+        "pgd_robustness_forensics_metric": defense.pgd_robustness_forensics_metric,
         "gan_both_train": defense.gan_both_train,
         "gan_both_sample": defense.gan_both_sample,
         "gan_both_metric": defense.gan_both_metric,

@@ -27,13 +27,15 @@ class Robustness(Base, nn.Module):
         logo = self._load_imgs([logo_path])
         return logo
 
-    def _gauss_noise(self, pert: tensor, gauss_mean: float, gauss_std: float) -> tensor:
+    def _gauss_noise(
+        self, pert: tensor, gauss_mean: float = 0, gauss_std: float = 0.1
+    ) -> tensor:
         gauss_noise = gauss_mean + gauss_std * torch.randn(pert.shape).cuda()
         noise_pert = pert + gauss_noise
 
         return noise_pert
 
-    def _webp_compress(self, imgs, quality):
+    def _webp_compress(self, imgs: tensor, quality: float = 80):
         compressed_imgs = []
         for i in range(imgs.size(0)):
             img = imgs[i]
@@ -50,7 +52,7 @@ class Robustness(Base, nn.Module):
 
         return torch.stack(compressed_imgs).cuda()
 
-    def _crop(self, imgs: tensor, thickness: float) -> tensor:
+    def _crop(self, imgs: tensor, thickness: float = 20) -> tensor:
         crop_imgs = imgs.clone()
         crop_imgs[:, :, :thickness, :] = 0
         crop_imgs[:, :, -thickness:, :] = 0

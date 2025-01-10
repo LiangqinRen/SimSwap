@@ -356,13 +356,16 @@ class Effectiveness:
         effectivenesses = {}
         for k, v in self.candi_funcs.items():
             effectivenesses[k] = {}
-            if pert_imgs is not None:
+            if source_imgs is not None and pert_imgs is not None:
                 effectivenesses[k]["pert"] = v(source_imgs, pert_imgs)
 
-            effectivenesses[k]["swap"] = v(source_imgs, swap_imgs)
-            effectivenesses[k]["pert_swap"] = v(source_imgs, pert_swap_imgs)
+            if source_imgs is not None and swap_imgs is not None:
+                effectivenesses[k]["swap"] = v(source_imgs, swap_imgs)
 
-            if anchor_imgs is not None:
+            if source_imgs is not None and pert_swap_imgs is not None:
+                effectivenesses[k]["pert_swap"] = v(source_imgs, pert_swap_imgs)
+
+            if pert_swap_imgs is not None and anchor_imgs is not None:
                 effectivenesses[k]["anchor"] = v(pert_swap_imgs, anchor_imgs)
 
         return effectivenesses
