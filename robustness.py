@@ -125,9 +125,12 @@ class Robustness(Base, nn.Module):
             join(self.args.data_dir, "fingerprinted_images", i)
             for i in fingerprints_path
         ]
+        test_imgs_path = self.__get_all_test_imgs_path()
+
         logo = self._load_logo()
 
         total_batch = len(fingerprints_path) // self.args.batch_size
+        os.makedirs(join(self.args.log_dir, "image", "swap"), exist_ok=True)
         os.makedirs(join(self.args.log_dir, "image", "noise"), exist_ok=True)
         os.makedirs(join(self.args.log_dir, "image", "compress"), exist_ok=True)
         os.makedirs(join(self.args.log_dir, "image", "crop"), exist_ok=True)
@@ -138,16 +141,30 @@ class Robustness(Base, nn.Module):
             iter_imgs1_path = fingerprints_path[
                 i * self.args.batch_size : (i + 1) * self.args.batch_size
             ]
+            iter_imgs2_path = test_imgs_path[
+                i * self.args.batch_size : (i + 1) * self.args.batch_size
+            ]
 
             imgs1 = self._load_imgs(iter_imgs1_path)
+            imgs2 = self._load_imgs(iter_imgs2_path)
 
-            noise_imgs1 = self._gauss_noise(imgs1, 0, 0.1)
-            compress_imgs1 = self._webp_compress(imgs1, 80)
-            crop_imgs1 = self._crop(imgs1, 20)
-            logo_imgs1 = self._logo(imgs1, logo)
-            inc_bright_imgs1 = self._brightness(imgs1, 1.25)
-            dec_bright_imgs1 = self._brightness(imgs1, 0.75)
+            imgs2_identity = self._get_imgs_identity(imgs2)
+            imgs1_tgt_swap = self.target(None, imgs1, imgs2_identity, None, True)
 
+            results = imgs1_tgt_swap
+
+            noise_imgs1 = self._gauss_noise(results, 0, 0.1)
+            compress_imgs1 = self._webp_compress(results, 80)
+            crop_imgs1 = self._crop(results, 20)
+            logo_imgs1 = self._logo(results, logo)
+            inc_bright_imgs1 = self._brightness(results, 1.25)
+            dec_bright_imgs1 = self._brightness(results, 0.75)
+
+            for j in range(results.shape[0]):
+                save_image(
+                    results[j],
+                    join(self.args.log_dir, "image", "swap", f"{i}_{j}.png"),
+                )
             for j in range(noise_imgs1.shape[0]):
                 save_image(
                     noise_imgs1[j],

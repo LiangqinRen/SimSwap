@@ -8,6 +8,7 @@ import os
 import warnings
 import boto3
 import random
+import pickle
 import numpy as np
 import torchvision.transforms as transforms
 
@@ -291,20 +292,35 @@ class Effectiveness:
 
         return results
 
-    def get_image_distance(self, img1: np.ndarray, img2: np.ndarray):
+    # def get_image_distance(self, img1: np.ndarray, img2: np.ndarray):
+    #     img1_cropped = self.mtcnn(img1)
+    #     img2_cropped = self.mtcnn(img2)
+
+    #     if img1_cropped is None or img2_cropped is None:
+    #         return math.nan
+
+    #     img1_embeddings = self.FaceVerification(img1_cropped.unsqueeze(0).cuda())
+    #     img2_embeddings = self.FaceVerification(img2_cropped.unsqueeze(0).cuda())
+
+    #     with torch.no_grad():
+    #         distance = (img1_embeddings - img2_embeddings).norm().item()
+
+    #     return distance
+
+    def get_image_distance(self, img1: np.ndarray, embeddings: list) -> list:
         img1_cropped = self.mtcnn(img1)
-        img2_cropped = self.mtcnn(img2)
 
-        if img1_cropped is None or img2_cropped is None:
-            return math.nan
+        if img1_cropped is None:
+            return [math.nan] * len(embeddings)
 
-        img1_embeddings = self.FaceVerification(img1_cropped.unsqueeze(0).cuda())
-        img2_embeddings = self.FaceVerification(img2_cropped.unsqueeze(0).cuda())
-
+        img1_embedding = self.FaceVerification(img1_cropped.unsqueeze(0).cuda())
+        distances = []
         with torch.no_grad():
-            distance = (img1_embeddings - img2_embeddings).norm().item()
+            for embedding in embeddings:
+                distance = (img1_embedding - img1_embedding).norm().item()
+                distances.append(distance)
 
-        return distance
+        return distances
 
     def get_images_distance(
         self, imgs1: torch.tensor, imgs2: torch.tensor
@@ -379,6 +395,33 @@ class Anchor:
 
         self.anchorset_dir = join(args.data_dir, "anchor", args.anchor_dir)
         self.anchor_imgs = self.__get_anchor_imgs()
+        self.anchor_cache = self.__cache_anchor_imgs()
+
+    def __cache_anchor_imgs(self) -> dict:
+        mtcnn = MTCNN(
+            image_size=160,
+            device="cuda",
+            selection_method="largest",
+            keep_all=False,
+        )
+        FaceVerification = InceptionResnetV1(
+            classify=False, pretrained="vggface2"
+        ).cuda()
+        FaceVerification.eval()
+
+        anchor_cache = {}
+        for k, v in self.anchor_imgs.items():
+            imgs_ndarray = v.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
+            embeddings = []
+            for i, img in enumerate(imgs_ndarray):
+                img_cropped = mtcnn(img)
+                if img_cropped is None:
+                    self.logger.fatal(f"Cannot detect the face from {i}th {k}")
+                embedding = FaceVerification(img_cropped.unsqueeze(0).cuda())
+                embeddings.append(embedding)
+            anchor_cache[k] = embeddings
+
+        return anchor_cache
 
     def __hash_tensor(self, img: tensor):
         return hash(tuple(img.view(-1).tolist()))
@@ -444,14 +487,18 @@ class Anchor:
 
                     gender = response["faces"][0]["attributes"]["gender"]["value"]
                     result[self.__hash_tensor(img)] = gender.lower()
+                    break
                 elif response.status_code == 400:
+                    self.logger.info(response["time_used"])
                     return result
                 elif response.status_code == 403:
+                    fail_count += 0.25
                     time.sleep(0.3)
-                    fail_count += 1
                 else:
+                    fail_count += 1
                     self.logger.error(response)
             except BaseException as e:
+                fail_count += 1
                 self.logger.error(e)
 
         return result
@@ -488,11 +535,17 @@ class Anchor:
         for i in range(imgs.shape[0]):
             if self.args.anchor_mix:
                 candidates = self.anchor_imgs["mix"]
+                cache = self.anchor_cache["mix"]
             else:
                 candidates = (
                     self.anchor_imgs["female"]
                     if imgs_gender[self.__hash_tensor(imgs[i])] == "male"
                     else self.anchor_imgs["male"]
+                )
+                cache = (
+                    self.anchor_cache["female"]
+                    if imgs_gender[self.__hash_tensor(imgs[i])] == "male"
+                    else self.anchor_cache["male"]
                 )
 
             # img_to_match = imgs[i].unsqueeze(0)
@@ -502,21 +555,17 @@ class Anchor:
             # )
             same_identity = [False] * candidates.shape[0]
 
-            anchor_img_ndarray = (
-                candidates.detach().cpu().numpy().transpose(0, 2, 3, 1) * 255.0
-            )
             distances = []
             for j in range(candidates.shape[0]):
-                distance = self.effectiveness.get_image_distance(
-                    imgs_ndarray[i], anchor_img_ndarray[j]
-                )
-                if (
-                    distance is math.nan
-                    or distance <= self.args.anchor_min_distance
-                    or same_identity[j]
-                ):
-                    continue
-                distances.append((distance, j))
+                results = self.effectiveness.get_image_distance(imgs_ndarray[i], cache)
+                for distance in results:
+                    if (
+                        distance is math.nan
+                        or distance <= self.args.anchor_min_distance
+                        or same_identity[j]
+                    ):
+                        continue
+                    distances.append((distance, j))
 
             sorted_distances = sorted(distances)
             if len(sorted_distances) > self.args.anchor_index:
