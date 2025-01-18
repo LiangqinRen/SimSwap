@@ -317,7 +317,7 @@ class Effectiveness:
         distances = []
         with torch.no_grad():
             for embedding in embeddings:
-                distance = (img1_embedding - img1_embedding).norm().item()
+                distance = (embedding - img1_embedding).norm().item()
                 distances.append(distance)
 
         return distances
@@ -555,17 +555,16 @@ class Anchor:
             # )
             same_identity = [False] * candidates.shape[0]
 
+            results = self.effectiveness.get_image_distance(imgs_ndarray[i], cache)
             distances = []
-            for j in range(candidates.shape[0]):
-                results = self.effectiveness.get_image_distance(imgs_ndarray[i], cache)
-                for distance in results:
-                    if (
-                        distance is math.nan
-                        or distance <= self.args.anchor_min_distance
-                        or same_identity[j]
-                    ):
-                        continue
-                    distances.append((distance, j))
+            for j, distance in enumerate(results):
+                if (
+                    distance is math.nan
+                    or distance <= self.args.anchor_min_distance
+                    or same_identity[j]
+                ):
+                    continue
+                distances.append((distance, j))
 
             sorted_distances = sorted(distances)
             if len(sorted_distances) > self.args.anchor_index:
