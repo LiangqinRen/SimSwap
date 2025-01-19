@@ -35,7 +35,7 @@ class SimSwapDefense(Base, nn.Module):
         ]
 
         self.pgd_rgb_limits = {"R": 0.075, "G": 0.03, "B": 0.075}
-        self.pgd_loss_weights = {"pert": 1000, "identity": 10000, "latent": 0.1}
+        self.pgd_loss_weights = {"pert": 0, "identity": 10000, "latent": 0.1}
         self.pgd_loss_limits = {"latent": 30}
 
         self.gan_rgb_limits = [0.075, 0.03, 0.075]
@@ -536,6 +536,8 @@ class SimSwapDefense(Base, nn.Module):
             with open(join(self.args.log_dir, "pert_swap_distances.txt"), "a") as f:
                 for dist in pert_swap_distance:
                     f.write(f"{dist}\n")
+            anchor_distance = [x for x in anchor_distance if math.isfinite(x)]
+            pert_swap_distance = [x for x in pert_swap_distance if math.isfinite(x)]
             accumulate_anchor_distance.extend(anchor_distance)
             accumulate_pert_swap_distance.extend(pert_swap_distance)
 
